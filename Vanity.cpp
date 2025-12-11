@@ -102,7 +102,11 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
         for (int j = 0; j < (int)subList.size(); j++) {
           if (initPrefix(subList[j], &it)) {
             it.found = found;
-            it.prefix = strdup(it.prefix); // We need to allocate here, subList will be destroyed
+            #ifdef WIN64
+            it.prefix = _strdup(it.prefix);
+            #else
+            it.prefix = strdup(it.prefix);
+            #endif
             itPrefixes.push_back(it);
           }
         }
@@ -456,7 +460,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
 
     // Difficulty
     it->sPrefix = *(prefix_t *)data;
-    it->difficulty = pow(2, 5*(prefix.length()-hrp_offset));
+    it->difficulty = pow(2.0, static_cast<double>(5 * (prefix.length() - hrp_offset)));
     it->isFull = false;
     it->lPrefix = 0;
     it->prefix = (char *)prefix.c_str();
@@ -512,7 +516,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
 
       // Difficulty
       it->sPrefix = *(prefix_t *)data;
-      it->difficulty = pow(2, 5*(prefix.length()-hrp_offset));
+      it->difficulty = pow(2.0, static_cast<double>(5 * (prefix.length() - hrp_offset)));
       it->isFull = false;
       it->lPrefix = 0;
       it->prefix = (char *)prefix.c_str();
@@ -562,7 +566,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
       }
 
       // Difficulty
-      it->difficulty = pow(256, prefix.length() - 1);
+      it->difficulty = pow(256.0, static_cast<double>(prefix.length() - 1));
       it->isFull = false;
       it->sPrefix = 0;
       it->lPrefix = 0;
@@ -612,7 +616,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
     }
 
     // Difficulty
-    it->difficulty = pow(2, 192) / pow(58, nbDigit);
+    it->difficulty = pow(2.0, 192.0) / pow(58.0, static_cast<double>(nbDigit));
     it->isFull = false;
     it->lPrefix = 0;
     it->prefix = (char *)prefix.c_str();
