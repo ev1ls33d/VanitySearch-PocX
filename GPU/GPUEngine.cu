@@ -156,6 +156,7 @@ int _ConvertSMVer2Cores(int major, int minor) {
       {0x75,  64},
       {0x80,  64},
       {0x86, 128},
+      {0x90, 128},
       {-1, -1} };
 
   int index = 0;
@@ -178,6 +179,17 @@ GPUEngine::GPUEngine(int nbThreadGroup, int nbThreadPerGroup, int gpuId, uint32_
   this->rekey = rekey;
   this->nbThreadPerGroup = nbThreadPerGroup;
   initialised = false;
+  
+  // Initialisiere alle Pointer auf nullptr
+  inputPrefix = nullptr;
+  inputPrefixPinned = nullptr;
+  inputPrefixLookUp = nullptr;
+  inputPrefixLookUpPinned = nullptr;
+  inputKey = nullptr;
+  inputKeyPinned = nullptr;
+  outputPrefix = nullptr;
+  outputPrefixPinned = nullptr;
+  
   cudaError_t err;
 
   int deviceCount = 0;
@@ -284,7 +296,6 @@ GPUEngine::GPUEngine(int nbThreadGroup, int nbThreadPerGroup, int gpuId, uint32_
   initialised = true;
   pattern = "";
   hasPattern = false;
-  inputPrefixLookUp = NULL;
 
 }
 
@@ -294,60 +305,74 @@ int GPUEngine::GetGroupSize() {
 
 void GPUEngine::PrintCudaInfo() {
 
-  cudaError_t err;
-
-  const char *sComputeMode[] =
-  {
-    "Multiple host threads",
-    "Only one host thread",
-    "No host thread",
-    "Multiple process threads",
-    "Unknown",
-     NULL
-  };
-
-  int deviceCount = 0;
-  cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
-
-  if (error_id != cudaSuccess) {
-    printf("GPUEngine: CudaGetDeviceCount %s\n", cudaGetErrorString(error_id));
-    return;
-  }
-
-  // This function call returns 0 if there are no CUDA capable devices.
-  if (deviceCount == 0) {
-    printf("GPUEngine: There are no available device(s) that support CUDA\n");
-    return;
-  }
-
-  for(int i=0;i<deviceCount;i++) {
-
-    err = cudaSetDevice(i);
-    if (err != cudaSuccess) {
-      printf("GPUEngine: cudaSetDevice(%d) %s\n", i, cudaGetErrorString(err));
-      return;
-    }
-
-    cudaDeviceProp deviceProp;
-    cudaGetDeviceProperties(&deviceProp, i);
-    printf("GPU #%d %s (%dx%d cores) (Cap %d.%d) (%.1f MB) (%s)\n",
-      i,deviceProp.name,deviceProp.multiProcessorCount,
-      _ConvertSMVer2Cores(deviceProp.major, deviceProp.minor),
-      deviceProp.major, deviceProp.minor,(double)deviceProp.totalGlobalMem/1048576.0,
-      sComputeMode[deviceProp.computeMode]);
-
-  }
+  //cudaError_t err;
+  //
+  //const char *sComputeMode[] =
+  //{
+  //  "Multiple host threads",
+  //  "Only one host thread",
+  //  "No host thread",
+  //  "Multiple process threads",
+  //  "Unknown",
+  //   NULL
+  //};
+  //
+  //int deviceCount = 0;
+  //cudaError_t error_id = cudaGetDeviceCount(&deviceCount);
+  //
+  //if (error_id != cudaSuccess) {
+  //  printf("GPUEngine: CudaGetDeviceCount %s\n", cudaGetErrorString(error_id));
+  //  return;
+  //}
+  //
+  //// This function call returns 0 if there are no CUDA capable devices.
+  //if (deviceCount == 0) {
+  //  printf("GPUEngine: There are no available device(s) that support CUDA\n");
+  //  return;
+  //}
+  //
+  //for(int i=0;i<deviceCount;i++) {
+  //
+  //  err = cudaSetDevice(i);
+  //  if (err != cudaSuccess) {
+  //    printf("GPUEngine: cudaSetDevice(%d) %s\n", i, cudaGetErrorString(err));
+  //    return;
+  //  }
+  //
+  //  cudaDeviceProp deviceProp;
+  //  cudaGetDeviceProperties(&deviceProp, i);
+  //  printf("GPU #%d %s (%dx%d cores) (Cap %d.%d) (%.1f MB) (%s)\n",
+  //    i,deviceProp.name,deviceProp.multiProcessorCount,
+  //    _ConvertSMVer2Cores(deviceProp.major, deviceProp.minor),
+  //    deviceProp.major, deviceProp.minor,(double)deviceProp.totalGlobalMem/1048576.0,
+  //    sComputeMode[deviceProp.computeMode]);
+  //
+  //}
 
 }
 
 GPUEngine::~GPUEngine() {
+    if (!initialised) return;
 
-  cudaFree(inputKey);
-  cudaFree(inputPrefix);
-  if(inputPrefixLookUp) cudaFree(inputPrefixLookUp);
-  cudaFreeHost(outputPrefixPinned);
-  cudaFree(outputPrefix);
+    // KRITISCH: Warte auf GPU-Abschluss
+    cudaDeviceSynchronize();
 
+    // Ignoriere Fehler beim Freigeben (besser als Memory Leak)
+    if (inputKey) cudaFree(inputKey);
+    if (inputKeyPinned) cudaFreeHost(inputKeyPinned);
+    if (inputPrefix) cudaFree(inputPrefix);
+    if (inputPrefixPinned) cudaFreeHost(inputPrefixPinned);
+    if (inputPrefixLookUp) cudaFree(inputPrefixLookUp);
+    if (inputPrefixLookUpPinned) cudaFreeHost(inputPrefixLookUpPinned);
+    if (outputPrefix) cudaFree(outputPrefix);
+    if (outputPrefixPinned) cudaFreeHost(outputPrefixPinned);
+}
+
+void GPUEngine::WaitForCompletion() {
+    if (!initialised) return;
+
+    // Synchronisiere alle GPU-Operationen
+    cudaDeviceSynchronize();
 }
 
 int GPUEngine::GetNbThread() {
@@ -840,5 +865,3 @@ bool GPUEngine::Check(Secp256K1 *secp) {
   return ok;
 
 }
-
-

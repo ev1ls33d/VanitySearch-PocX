@@ -90,4 +90,14 @@
   <ItemGroup>
     <Text Include="LICENSE.txt" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Makefile" />
+    <None Include="PoCX-Reference\base58.rs" />
+    <None Include="PoCX-Reference\bech32.rs" />
+    <None Include="PoCX-Reference\common.rs" />
+    <None Include="PoCX-Reference\crypto.rs" />
+    <None Include="PoCX-Reference\lib.rs" />
+    <None Include="PoCX-Reference\main.rs" />
+    <None Include="README.md" />
+  </ItemGroup>
 </Project>
