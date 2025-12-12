@@ -25,7 +25,7 @@
 #include "hash/sha512.h"
 #include "hash/sha256.h"
 
-#define RELEASE "1.19"
+#define RELEASE "1.0"
 
 using namespace std;
 
@@ -556,7 +556,7 @@ int main(int argc, char* argv[]) {
 
   }
 
-  printf("VanitySearch v" RELEASE "\n");
+  printf("PoCX-VanitySearch v" RELEASE " - by EviLSeeD\n\n");
 
   if(gridSize.size()==0) {
     for (int i = 0; i < gpuId.size(); i++) {

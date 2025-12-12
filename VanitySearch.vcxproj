@@ -17,6 +17,7 @@
   <ItemGroup>
     <ClInclude Include="Base58.h" />
     <ClInclude Include="Bech32.h" />
+    <ClInclude Include="DescriptorChecksum.h" />
     <ClInclude Include="GPU\GPUBase58.h" />
     <ClInclude Include="GPU\GPUCompute.h" />
     <ClInclude Include="GPU\GPUEngine.h" />
@@ -39,6 +40,7 @@
   <ItemGroup>
     <ClCompile Include="Base58.cpp" />
     <ClCompile Include="Bech32.cpp" />
+    <ClCompile Include="DescriptorChecksum.cpp" />
     <ClCompile Include="GPU\GPUGenerate.cpp" />
     <ClCompile Include="hash\ripemd160.cpp" />
     <ClCompile Include="hash\ripemd160_sse.cpp" />

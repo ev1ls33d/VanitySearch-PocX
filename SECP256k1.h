@@ -49,6 +49,7 @@ public:
   bool CheckPudAddress(std::string address);
 
   std::string GetPrivAddress(bool compressed, Int &privKey);
+  std::string GetPrivAddressTestnet(bool compressed, Int &privKey);
   Int DecodePrivateKey(char *key, bool *compressed);
 
   void GetHash160(int type, bool compressed, Point &k0, Point &k1, Point &k2, Point &k3,

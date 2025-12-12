@@ -24,6 +24,7 @@
 #include "Wildcard.h"
 #include "Timer.h"
 #include "hash/ripemd160.h"
+#include "DescriptorChecksum.h"
 #include <string.h>
 #include <math.h>
 #include <algorithm>
@@ -793,6 +794,7 @@ void VanitySearch::output(string addr,string pAddr,string pAddrHex) {
     printf("\n");
 
   fprintf(f, "PubAddress: %s\n", addr.c_str());
+  fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
 
   if (startPubKeySpecified) {
 
@@ -811,10 +813,29 @@ void VanitySearch::output(string addr,string pAddr,string pAddrHex) {
       fprintf(f, "Priv (WIF): p2wpkh:%s\n", pAddr.c_str());
       break;
     case POCX:
-      fprintf(f, "Priv (WIF): pocx:%s\n", pAddr.c_str());
+      {
+        // Decode the private key to generate both mainnet and testnet WIFs
+        Int privKey;
+        privKey.SetBase16((char *)pAddrHex.c_str());
+        bool compressed = (searchMode == SEARCH_COMPRESSED);
+        
+        // Generate mainnet WIF
+        string mainnetWif = secp->GetPrivAddress(compressed, privKey);
+        // Generate testnet WIF
+        string testnetWif = secp->GetPrivAddressTestnet(compressed, privKey);
+        
+        // Calculate descriptor checksums using Bitcoin Core algorithm
+        string mainnetDescriptor = "wpkh(" + mainnetWif + ")";
+        string testnetDescriptor = "wpkh(" + testnetWif + ")";
+        
+        string mainnetChecksum = DescriptorChecksum(mainnetDescriptor);
+        string testnetChecksum = DescriptorChecksum(testnetDescriptor);
+        
+        fprintf(f, "Priv (WIF Mainnet): %s#%s\n", mainnetDescriptor.c_str(), mainnetChecksum.c_str());
+        fprintf(f, "Priv (WIF Testnet): %s#%s\n", testnetDescriptor.c_str(), testnetChecksum.c_str());
+      }
       break;
     }
-    fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
 
   }
 
@@ -1271,7 +1292,7 @@ void VanitySearch::checkAddressesSSE(bool compressed,Int key, int i, Point p1, P
   }
 
   // Curve symetrie -------------------------------------------------------------------------
-  // if (x,y) = k*G, then (x, -y) is -k*G
+// if (x,y) = k*G, then (x, -y) is -k*G
 
   p1.y.ModNeg();
   p2.y.ModNeg();

@@ -626,6 +626,30 @@ std::string Secp256K1::GetPrivAddress(bool compressed,Int &privKey) {
 
 }
 
+std::string Secp256K1::GetPrivAddressTestnet(bool compressed,Int &privKey) {
+
+  unsigned char address[38];
+
+  address[0] = 0xef; // Testnet
+  privKey.Get32Bytes(address + 1);
+
+  if( compressed ) {
+
+    // compressed suffix
+    address[33] = 1;
+    sha256_checksum(address, 34, address + 34);
+    return EncodeBase58(address,address + 38);
+
+  } else {
+
+    // Compute checksum
+    sha256_checksum(address, 33, address + 33);
+    return EncodeBase58(address,address + 37);
+
+  }
+
+}
+
 #define CHECKSUM(buff,A) \
 (buff)[0] = (uint32_t)A[0] << 24 | (uint32_t)A[1] << 16 | (uint32_t)A[2] << 8 | (uint32_t)A[3];\
 (buff)[1] = (uint32_t)A[4] << 24 | (uint32_t)A[5] << 16 | (uint32_t)A[6] << 8 | (uint32_t)A[7];\
