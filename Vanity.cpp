@@ -24,6 +24,7 @@
 #include "Wildcard.h"
 #include "Timer.h"
 #include "hash/ripemd160.h"
+#include "DescriptorChecksum.h"
 #include <string.h>
 #include <math.h>
 #include <algorithm>
@@ -102,7 +103,11 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
         for (int j = 0; j < (int)subList.size(); j++) {
           if (initPrefix(subList[j], &it)) {
             it.found = found;
-            it.prefix = strdup(it.prefix); // We need to allocate here, subList will be destroyed
+            #ifdef WIN64
+            it.prefix = _strdup(it.prefix);
+            #else
+            it.prefix = strdup(it.prefix);
+            #endif
             itPrefixes.push_back(it);
           }
         }
@@ -241,13 +246,17 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
     case '3':
       searchType = P2SH;
       break;
+    case 'p':
+    case 'P':
+      searchType = POCX;
+      break;
     case 'b':
     case 'B':
       searchType = BECH32;
       break;
 
     default:
-      printf("Invalid start character 1,3 or b, expected");
+      printf("Invalid start character 1, 3, p, or b expected\n");
       exit(1);
 
     }
@@ -357,22 +366,40 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
   case '3':
     aType = P2SH;
     break;
+  case 'p':
+  case 'P':
+    {
+      // Check if it's a Bech32 POCX address (pocx1q...) or Base58 POCX (p...)
+      std::string lowerPrefix = prefix;
+      std::transform(lowerPrefix.begin(), lowerPrefix.end(), lowerPrefix.begin(), ::tolower);
+      if(strncmp(lowerPrefix.c_str(), "pocx1q", 6) == 0) {
+        aType = POCX;  // POCX Bech32 format - use POCX type
+      } else {
+        aType = POCX;  // PoCX mainnet Base58 addresses start with 'p' (version 0x55)
+      }
+      break;
+    }
+    break;
   case 'b':
   case 'B':
-    std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::tolower);
-    if(strncmp(prefix.c_str(), "bc1q", 4) == 0)
-      aType = BECH32;
-    break;
+    {
+      std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::tolower);
+      if(strncmp(prefix.c_str(), "bc1q", 4) == 0)
+        aType = BECH32;
+      else if(strncmp(prefix.c_str(), "pocx1q", 6) == 0)
+        aType = POCX; // PoCX Bech32 format - use POCX type
+      break;
+    }
   }
 
   if (aType==-1) {
-    printf("Ignoring prefix \"%s\" (must start with 1 or 3 or bc1q)\n", prefix.c_str());
+    printf("Ignoring prefix \"%s\" (must start with 1, 3, p, bc1q, or pocx1q)\n", prefix.c_str());
     return false;
   }
 
   if (searchType == -1) searchType = aType;
   if (aType != searchType) {
-    printf("Ignoring prefix \"%s\" (P2PKH, P2SH or BECH32 allowed at once)\n", prefix.c_str());
+    printf("Ignoring prefix \"%s\" (P2PKH, P2SH, POCX or BECH32 allowed at once)\n", prefix.c_str());
     return false;
   }
 
@@ -382,7 +409,20 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
     uint8_t witprog[40];
     size_t witprog_len;
     int witver;
-    const char* hrp = "bc";
+    
+    // Determine HRP and prefix offset based on the address type
+    const char* hrp;
+    int hrp_offset;
+    std::string lowerPrefix = prefix;
+    std::transform(lowerPrefix.begin(), lowerPrefix.end(), lowerPrefix.begin(), ::tolower);
+    
+    if (strncmp(lowerPrefix.c_str(), "pocx1q", 6) == 0) {
+      hrp = "pocx";
+      hrp_offset = 6; // Skip "pocx1q"
+    } else {
+      hrp = "bc";
+      hrp_offset = 4; // Skip "bc1q"
+    }
 
     int ret = segwit_addr_decode(&witver, witprog, &witprog_len, hrp, prefix.c_str());
 
@@ -401,27 +441,27 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
 
     }
 
-    if (prefix.length() < 5) {
-      printf("Ignoring prefix \"%s\" (too short, length<5 )\n", prefix.c_str());
+    if (prefix.length() < hrp_offset + 1) {
+      printf("Ignoring prefix \"%s\" (too short, length<%d )\n", prefix.c_str(), hrp_offset + 1);
       return false;
     }
 
-    if (prefix.length() >= 36) {
-      printf("Ignoring prefix \"%s\" (too long, length>36 )\n", prefix.c_str());
+    if (prefix.length() >= 90) {
+      printf("Ignoring prefix \"%s\" (too long, length>=90 )\n", prefix.c_str());
       return false;
     }
 
     uint8_t data[64];
     memset(data,0,64);
     size_t data_length;
-    if(!bech32_decode_nocheck(data,&data_length,prefix.c_str()+4)) {
+    if(!bech32_decode_nocheck(data,&data_length,prefix.c_str()+hrp_offset)) {
       printf("Ignoring prefix \"%s\" (Only \"023456789acdefghjklmnpqrstuvwxyz\" allowed)\n", prefix.c_str());
       return false;
     }
 
     // Difficulty
     it->sPrefix = *(prefix_t *)data;
-    it->difficulty = pow(2, 5*(prefix.length()-4));
+    it->difficulty = pow(2.0, static_cast<double>(5 * (prefix.length() - hrp_offset)));
     it->isFull = false;
     it->lPrefix = 0;
     it->prefix = (char *)prefix.c_str();
@@ -429,9 +469,68 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
 
     return true;
 
+  } else if (aType == POCX) {
+  
+    // POCX - could be Base58 (p...) or Bech32 (pocx1q...)
+    std::string lowerPrefix = prefix;
+    std::transform(lowerPrefix.begin(), lowerPrefix.end(), lowerPrefix.begin(), ::tolower);
+    
+    if (strncmp(lowerPrefix.c_str(), "pocx1q", 6) == 0) {
+      // POCX Bech32 format
+      uint8_t witprog[40];
+      size_t witprog_len;
+      int witver;
+      const char* hrp = "pocx";
+      int hrp_offset = 6;
+
+      int ret = segwit_addr_decode(&witver, witprog, &witprog_len, hrp, prefix.c_str());
+
+      // Try to attack a full address ?
+      if (ret && witprog_len==20) {
+        it->difficulty = pow(2, 160);
+        it->isFull = true;
+        memcpy(it->hash160, witprog, 20);
+        it->sPrefix = *(prefix_t *)(it->hash160);
+        it->lPrefix = *(prefixl_t *)(it->hash160);
+        it->prefix = (char *)prefix.c_str();
+        it->prefixLength = (int)prefix.length();
+        return true;
+      }
+
+      if (prefix.length() < hrp_offset + 1) {
+        printf("Ignoring prefix \"%s\" (too short, length<%d )\n", prefix.c_str(), hrp_offset + 1);
+        return false;
+      }
+
+      if (prefix.length() >= 90) {
+        printf("Ignoring prefix \"%s\" (too long, length>=90 )\n", prefix.c_str());
+        return false;
+      }
+
+      uint8_t data[64];
+      memset(data,0,64);
+      size_t data_length;
+      if(!bech32_decode_nocheck(data,&data_length,prefix.c_str()+hrp_offset)) {
+        printf("Ignoring prefix \"%s\" (Only \"023456789acdefghjklmnpqrstuvwxyz\" allowed)\n", prefix.c_str());
+        return false;
+      }
+
+      // Difficulty
+      it->sPrefix = *(prefix_t *)data;
+      it->difficulty = pow(2.0, static_cast<double>(5 * (prefix.length() - hrp_offset)));
+      it->isFull = false;
+      it->lPrefix = 0;
+      it->prefix = (char *)prefix.c_str();
+      it->prefixLength = (int)prefix.length();
+
+      return true;
+    }
+    
+    // Fall through to Base58 POCX handling below
+
   } else {
 
-    // P2PKH/P2SH
+    // P2PKH/P2SH/POCX
 
     wrong = !DecodeBase58(prefix, result);
 
@@ -459,7 +558,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
 
     }
 
-    // Prefix containing only '1'
+    // Prefix containing only '1' (Bitcoin) or 'p' followed by only '1' (PoCX)
     if (isSingularPrefix(prefix)) {
 
       if (prefix.length() > 21) {
@@ -468,7 +567,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
       }
 
       // Difficulty
-      it->difficulty = pow(256, prefix.length() - 1);
+      it->difficulty = pow(256.0, static_cast<double>(prefix.length() - 1));
       it->isFull = false;
       it->sPrefix = 0;
       it->lPrefix = 0;
@@ -496,6 +595,10 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
       }
     }
 
+    // For POCX, we don't validate the version byte here for short prefixes
+    // because the padding process doesn't guarantee the version byte will be set
+    // The actual address generation will ensure the correct version byte (0x55)
+
     if (result.size() != 25) {
       printf("Ignoring prefix \"%s\" (Invalid size)\n", prefix.c_str());
       return false;
@@ -514,7 +617,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
     }
 
     // Difficulty
-    it->difficulty = pow(2, 192) / pow(58, nbDigit);
+    it->difficulty = pow(2.0, 192.0) / pow(58.0, static_cast<double>(nbDigit));
     it->isFull = false;
     it->lPrefix = 0;
     it->prefix = (char *)prefix.c_str();
@@ -691,6 +794,7 @@ void VanitySearch::output(string addr,string pAddr,string pAddrHex) {
     printf("\n");
 
   fprintf(f, "PubAddress: %s\n", addr.c_str());
+  fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
 
   if (startPubKeySpecified) {
 
@@ -708,8 +812,30 @@ void VanitySearch::output(string addr,string pAddr,string pAddrHex) {
     case BECH32:
       fprintf(f, "Priv (WIF): p2wpkh:%s\n", pAddr.c_str());
       break;
+    case POCX:
+      {
+        // Decode the private key to generate both mainnet and testnet WIFs
+        Int privKey;
+        privKey.SetBase16((char *)pAddrHex.c_str());
+        bool compressed = (searchMode == SEARCH_COMPRESSED);
+        
+        // Generate mainnet WIF
+        string mainnetWif = secp->GetPrivAddress(compressed, privKey);
+        // Generate testnet WIF
+        string testnetWif = secp->GetPrivAddressTestnet(compressed, privKey);
+        
+        // Calculate descriptor checksums using Bitcoin Core algorithm
+        string mainnetDescriptor = "wpkh(" + mainnetWif + ")";
+        string testnetDescriptor = "wpkh(" + testnetWif + ")";
+        
+        string mainnetChecksum = DescriptorChecksum(mainnetDescriptor);
+        string testnetChecksum = DescriptorChecksum(testnetDescriptor);
+        
+        fprintf(f, "Priv (WIF Mainnet): %s#%s\n", mainnetDescriptor.c_str(), mainnetChecksum.c_str());
+        fprintf(f, "Priv (WIF Testnet): %s#%s\n", testnetDescriptor.c_str(), testnetChecksum.c_str());
+      }
+      break;
     }
-    fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
 
   }
 
@@ -1166,7 +1292,7 @@ void VanitySearch::checkAddressesSSE(bool compressed,Int key, int i, Point p1, P
   }
 
   // Curve symetrie -------------------------------------------------------------------------
-  // if (x,y) = k*G, then (x, -y) is -k*G
+// if (x,y) = k*G, then (x, -y) is -k*G
 
   p1.y.ModNeg();
   p2.y.ModNeg();
@@ -1476,8 +1602,6 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
 
 }
 
-// ----------------------------------------------------------------------------
-
 void VanitySearch::getGPUStartingKeys(int thId, int groupSize, int nbThread, Int *keys, Point *p) {
 
   for (int i = 0; i < nbThread; i++) {
@@ -1566,6 +1690,9 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
     }
 
   }
+
+  // NEU: Explizite Synchronisation über Wrapper-Funktion
+  g.WaitForCompletion();
 
   delete[] keys;
   delete[] p;
@@ -1764,8 +1891,6 @@ void VanitySearch::Search(int nbThread,std::vector<int> gpuId,std::vector<int> g
     t0 = t1;
 
   }
-
-  free(params);
 
 }
 

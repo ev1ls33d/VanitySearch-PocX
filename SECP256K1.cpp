@@ -363,6 +363,7 @@ void Secp256K1::GetHash160(int type,bool compressed,
 
   case P2PKH:
   case BECH32:
+  case POCX:
   {
 
     if (!compressed) {
@@ -556,6 +557,7 @@ void Secp256K1::GetHash160(int type, bool compressed, Point &pubKey, unsigned ch
 
   case P2PKH:
   case BECH32:
+  case POCX:
   {
     unsigned char publicKeyBytes[128];
 
@@ -624,6 +626,30 @@ std::string Secp256K1::GetPrivAddress(bool compressed,Int &privKey) {
 
 }
 
+std::string Secp256K1::GetPrivAddressTestnet(bool compressed,Int &privKey) {
+
+  unsigned char address[38];
+
+  address[0] = 0xef; // Testnet
+  privKey.Get32Bytes(address + 1);
+
+  if( compressed ) {
+
+    // compressed suffix
+    address[33] = 1;
+    sha256_checksum(address, 34, address + 34);
+    return EncodeBase58(address,address + 38);
+
+  } else {
+
+    // Compute checksum
+    sha256_checksum(address, 33, address + 33);
+    return EncodeBase58(address,address + 37);
+
+  }
+
+}
+
 #define CHECKSUM(buff,A) \
 (buff)[0] = (uint32_t)A[0] << 24 | (uint32_t)A[1] << 16 | (uint32_t)A[2] << 8 | (uint32_t)A[3];\
 (buff)[1] = (uint32_t)A[4] << 24 | (uint32_t)A[5] << 16 | (uint32_t)A[6] << 8 | (uint32_t)A[7];\
@@ -670,6 +696,22 @@ std::vector<std::string> Secp256K1::GetAddress(int type, bool compressed, unsign
     add3[0] = 0x05;
     add4[0] = 0x05;
     break;
+
+  case POCX:
+  {
+    // POCX uses Bech32 format with "pocx" HRP
+    char output[128];
+    segwit_addr_encode(output, "pocx", 0, h1, 20);
+    ret.push_back(std::string(output));
+    segwit_addr_encode(output, "pocx", 0, h2, 20);
+    ret.push_back(std::string(output));
+    segwit_addr_encode(output, "pocx", 0, h3, 20);
+    ret.push_back(std::string(output));
+    segwit_addr_encode(output, "pocx", 0, h4, 20);
+    ret.push_back(std::string(output));
+    return ret;
+  }
+  break;
 
   case BECH32:
   {
@@ -720,6 +762,15 @@ std::string Secp256K1::GetAddress(int type, bool compressed,unsigned char *hash1
       address[0] = 0x05;
       break;
 
+    case POCX:
+      {
+        // POCX uses Bech32 format with "pocx" HRP
+        char output[128];
+        segwit_addr_encode(output, "pocx", 0, hash160, 20);
+        return std::string(output);
+      }
+      break;
+
     case BECH32:
     {
       char output[128];
@@ -744,6 +795,20 @@ std::string Secp256K1::GetAddress(int type, bool compressed, Point &pubKey) {
 
   case P2PKH:
     address[0] = 0x00;
+    break;
+
+  case POCX:
+    {
+      // POCX uses Bech32 format with "pocx" HRP
+      if (!compressed) {
+        return " POCX: Only compressed key ";
+      }
+      char output[128];
+      uint8_t h160[20];
+      GetHash160(type, compressed, pubKey, h160);
+      segwit_addr_encode(output,"pocx",0,h160,20);
+      return std::string(output);
+    }
     break;
 
   case BECH32:
@@ -818,7 +883,6 @@ Point Secp256K1::AddDirect(Point &p1,Point &p2) {
   r.y.ModSub(&p2.y);       // ry = - p2.y - s*(ret.x-p2.x);
 
   return r;
-
 }
 
 Point Secp256K1::Add2(Point &p1, Point &p2) {
@@ -862,7 +926,6 @@ Point Secp256K1::Add2(Point &p1, Point &p2) {
   r.z.ModMulK1(&vs3, &p1.z);
 
   return r;
-
 }
 
 Point Secp256K1::Add(Point &p1,Point &p2) {

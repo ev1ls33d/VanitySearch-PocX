@@ -35,6 +35,12 @@ static const char *searchModes[] = {"Compressed","Uncompressed","Compressed or U
 #define ITEM_SIZE32 (ITEM_SIZE/4)
 #define _64K 65536
 
+// Address types
+#define P2PKH 0
+#define P2SH 1
+#define BECH32 2
+#define POCX 3
+
 typedef uint16_t prefix_t;
 typedef uint32_t prefixl_t;
 
@@ -57,6 +63,7 @@ class GPUEngine {
 public:
 
   GPUEngine(int nbThreadGroup,int nbThreadPerGroup,int gpuId,uint32_t maxFound,bool rekey);
+  void GPUEngine::WaitForCompletion();
   ~GPUEngine();
   void SetPrefix(std::vector<prefix_t> prefixes);
   void SetPrefix(std::vector<LPREFIX> prefixes,uint32_t totalPrefix);

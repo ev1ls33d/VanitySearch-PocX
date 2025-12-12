@@ -25,7 +25,7 @@
 #include "hash/sha512.h"
 #include "hash/sha256.h"
 
-#define RELEASE "1.19"
+#define RELEASE "1.0"
 
 using namespace std;
 
@@ -62,6 +62,12 @@ void printUsage() {
   printf(" -rp privkey partialkeyfile: Reconstruct final private key(s) from partial key(s) info.\n");
   printf(" -sp startPubKey: Start the search with a pubKey (for private key splitting)\n");
   printf(" -r rekey: Rekey interval in MegaKey, default is disabled\n");
+  printf("\n");
+  printf(" Supported address types:\n");
+  printf("   Bitcoin P2PKH  : prefix starts with '1'\n");
+  printf("   Bitcoin P2SH   : prefix starts with '3'\n");
+  printf("   Bitcoin BECH32 : prefix starts with 'bc1q'\n");
+  printf("   PoCX           : prefix starts with 'p' (or 'pocx1q' for Bech32)\n");
   exit(0);
 
 }
@@ -226,6 +232,9 @@ void outputAdd(string outputFile, int addrType, string addr, string pAddr, strin
   case BECH32:
     fprintf(f, "Priv (WIF): p2wpkh:%s\n", pAddr.c_str());
     break;
+  case POCX:
+    fprintf(f, "Priv (WIF): pocx:%s\n", pAddr.c_str());
+    break;
   }
   fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
 
@@ -276,6 +285,9 @@ void reconstructAdd(Secp256K1 *secp, string fileName, string outputFile, string 
         addrType = P2PKH; break;
       case '3':
         addrType = P2SH; break;
+      case 'p':
+      case 'P':
+        addrType = POCX; break;
       case 'b':
       case 'B':
         addrType = BECH32; break;
@@ -461,6 +473,7 @@ int main(int argc, char* argv[]) {
       printf("Addr (P2PKH): %s\n",secp->GetAddress(P2PKH,isComp,p).c_str());
       printf("Addr (P2SH): %s\n",secp->GetAddress(P2SH,isComp,p).c_str());
       printf("Addr (BECH32): %s\n",secp->GetAddress(BECH32,isComp,p).c_str());
+      printf("Addr (POCX): %s\n",secp->GetAddress(POCX,isComp,p).c_str());
       exit(0);
     } else if (strcmp(argv[a], "-cp") == 0) {
       a++;
@@ -478,6 +491,7 @@ int main(int argc, char* argv[]) {
       printf("Addr (P2PKH): %s\n", secp->GetAddress(P2PKH,isComp,p).c_str());
       printf("Addr (P2SH): %s\n", secp->GetAddress(P2SH,isComp,p).c_str());
       printf("Addr (BECH32): %s\n", secp->GetAddress(BECH32,isComp,p).c_str());
+      printf("Addr (POCX): %s\n", secp->GetAddress(POCX,isComp,p).c_str());
       exit(0);
     } else if (strcmp(argv[a], "-rp") == 0) {
       a++;
@@ -542,7 +556,7 @@ int main(int argc, char* argv[]) {
 
   }
 
-  printf("VanitySearch v" RELEASE "\n");
+  printf("PoCX-VanitySearch v" RELEASE " - by EviLSeeD\n\n");
 
   if(gridSize.size()==0) {
     for (int i = 0; i < gpuId.size(); i++) {
