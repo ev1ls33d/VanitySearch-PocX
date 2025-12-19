@@ -355,6 +355,40 @@ __global__ void comp_keys_p2sh_pattern(uint32_t mode, prefix_t *pattern, uint64_
 
 }
 
+// HD Wallet kernel - generates mnemonics and derives keys via BIP32/BIP44
+__global__ void comp_keys_hd(uint32_t mode, prefix_t *prefix, uint32_t *lookup32,
+                             uint64_t *mnemonicSeeds, uint32_t coinType, uint32_t account,
+                             uint32_t maxFound, uint32_t *found) {
+    
+    int xPtr = (blockIdx.x*blockDim.x) * 8;
+    int yPtr = xPtr + 4 * blockDim.x;
+    int tid = (blockIdx.x*blockDim.x) + threadIdx.x;
+    
+    // Get mnemonic seed for this thread (64 bytes)
+    uint8_t mnemonicSeed[64];
+    for (int i = 0; i < 8; i++) {
+        uint64_t val = mnemonicSeeds[tid * 8 + i];
+        for (int j = 0; j < 8; j++) {
+            mnemonicSeed[i*8 + j] = (val >> ((7-j)*8)) & 0xFF;
+        }
+    }
+    
+    // Derive HD key from mnemonic seed at path m/84'/coinType'/account'/0/0
+    uint64_t derivedKey[4];
+    _DeriveHDKeyFromSeed(mnemonicSeed, coinType, account, derivedKey);
+    
+    // Convert derived key to point on curve and continue with vanity search
+    // Store derived key back to keys array for ComputeKeys to process
+    uint64_t *keys = mnemonicSeeds; // Reuse the input array
+    for (int i = 0; i < 4; i++) {
+        keys[tid * 4 + i] = derivedKey[i];
+    }
+    
+    // Now call the standard key computation with the derived key
+    // The derived key is treated as a regular private key for address generation
+    ComputeKeys(mode, keys + xPtr, keys + yPtr, prefix, lookup32, maxFound, found);
+}
+
 //#define FULLCHECK
 #ifdef FULLCHECK
 
@@ -573,6 +607,9 @@ GPUEngine::GPUEngine(int nbThreadGroup, int nbThreadPerGroup, int gpuId, uint32_
   initialised = true;
   pattern = "";
   hasPattern = false;
+  hdWalletMode = false;
+  hdCoinType = 0;
+  hdAccount = 0;
 
 }
 
@@ -706,6 +743,38 @@ void GPUEngine::SetPattern(const char *pattern) {
 
 }
 
+void GPUEngine::SetHDWalletMode(bool enabled, uint32_t coinType, uint32_t account) {
+  this->hdWalletMode = enabled;
+  this->hdCoinType = coinType;
+  this->hdAccount = account;
+}
+
+bool GPUEngine::SetMnemonicSeeds(uint8_t *seeds, int count) {
+  // seeds should be an array of 64-byte mnemonic seeds (BIP39 seed output)
+  // Each seed is the result of PBKDF2(mnemonic, "mnemonic" + passphrase)
+  
+  if (count != nbThread) {
+    printf("GPUEngine: SetMnemonicSeeds: count (%d) != nbThread (%d)\n", count, nbThread);
+    return false;
+  }
+  
+  // Copy seeds to inputKeyPinned (we reuse this memory for HD wallet mode)
+  // Each seed is 64 bytes, so we need nbThread * 64 bytes
+  // inputKeyPinned is nbThread * 32 * 2 bytes, which equals nbThread * 64 bytes - perfect!
+  memcpy(inputKeyPinned, seeds, count * 64);
+  
+  // Fill device memory
+  cudaMemcpy(inputKey, inputKeyPinned, nbThread * 64, cudaMemcpyHostToDevice);
+  
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    printf("GPUEngine: SetMnemonicSeeds: %s\n", cudaGetErrorString(err));
+    return false;
+  }
+  
+  return true;
+}
+
 void GPUEngine::SetPrefix(std::vector<LPREFIX> prefixes, uint32_t totalPrefix) {
 
   // Allocate memory for the second level of lookup tables
@@ -760,8 +829,12 @@ bool GPUEngine::callKernel() {
   // Reset nbFound
   cudaMemset(outputPrefix,0,4);
 
-  // Call the kernel (Perform STEP_SIZE keys per thread)
-  if (searchType == P2SH) {
+  // Call the appropriate kernel
+  if (hdWalletMode) {
+    // HD Wallet mode - use mnemonic-based derivation
+    comp_keys_hd << < nbThread / nbThreadPerGroup, nbThreadPerGroup >> >
+      (searchMode, inputPrefix, inputPrefixLookUp, inputKey, hdCoinType, hdAccount, maxFound, outputPrefix);
+  } else if (searchType == P2SH) {
 
     if (hasPattern) {
       comp_keys_p2sh_pattern << < nbThread / nbThreadPerGroup, nbThreadPerGroup >> >
