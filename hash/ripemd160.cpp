@@ -17,6 +17,7 @@
 
 #include "ripemd160.h"
 #include <string.h>
+#include <cstdint>
 
 /// Internal RIPEMD-160 implementation.
 namespace _ripemd160 {

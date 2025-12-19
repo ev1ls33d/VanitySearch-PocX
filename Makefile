@@ -69,11 +69,21 @@ endif
 $(OBJDIR)/%.o : %.cpp
 	$(CXX) $(CXXFLAGS) -o $@ -c $<
 
-all: VanitySearch
+all: VanitySearch test_hd
 
 VanitySearch: $(OBJET)
 	@echo Making VanitySearch...
 	$(CXX) $(OBJET) $(LFLAGS) -o VanitySearch
+
+# Test program for HD wallet functionality
+TEST_HD_OBJ = $(addprefix $(OBJDIR)/, \
+        Base58.o Random.o Timer.o Int.o IntMod.o Point.o SECP256K1.o \
+        hash/ripemd160.o hash/sha256.o hash/sha512.o hash/ripemd160_sse.o \
+        hash/sha256_sse.o Bech32.o BIP39.o BIP32.o DescriptorChecksum.o test_hd.o)
+
+test_hd: $(TEST_HD_OBJ)
+	@echo Making test_hd...
+	$(CXX) $(TEST_HD_OBJ) $(LFLAGS) -o test_hd
 
 $(OBJET): | $(OBJDIR) $(OBJDIR)/GPU $(OBJDIR)/hash
 
@@ -91,4 +101,5 @@ clean:
 	@rm -f obj/*.o
 	@rm -f obj/GPU/*.o
 	@rm -f obj/hash/*.o
+	@rm -f VanitySearch test_hd
 

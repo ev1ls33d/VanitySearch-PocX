@@ -17,6 +17,7 @@
 
 #include "ripemd160.h"
 #include <string.h>
+#include <cstdint>
 #include <immintrin.h>
 
 // Internal SSE RIPEMD-160 implementation.

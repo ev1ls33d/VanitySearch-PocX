@@ -1,28 +1,16 @@
 /*
  * This file is part of the VanitySearch distribution (https://github.com/JeanLucPons/VanitySearch).
  * Copyright (c) 2019 Jean Luc PONS.
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, version 3.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
-*/
+ */
 
 #ifndef SHA512_H
 #define SHA512_H
-#include <string>
+#include <cstdint>
 
-void sha512(unsigned char *input, int length, unsigned char *digest);
-void pbkdf2_hmac_sha512(uint8_t *out, size_t outlen,const uint8_t *passwd, size_t passlen,const uint8_t *salt, size_t saltlen,uint64_t iter);
-void hmac_sha512(unsigned char *key, int key_length, unsigned char *message, int message_length, unsigned char *digest);
+void sha512(const uint8_t *input, size_t length, uint8_t *digest);
+void pbkdf2_hmac_sha512(uint8_t *output, size_t output_len,
+                        const uint8_t *password, size_t password_len,
+                        const uint8_t *salt, size_t salt_len,
+                        unsigned int rounds);
 
-std::string sha512_hex(unsigned char *digest);
-
-#endif
+#endif // SHA512_H
