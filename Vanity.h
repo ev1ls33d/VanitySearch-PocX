@@ -89,8 +89,8 @@ private:
   void checkAddrSSE(uint8_t *h1, uint8_t *h2, uint8_t *h3, uint8_t *h4,
                     int32_t incr1, int32_t incr2, int32_t incr3, int32_t incr4,
                     Int &key, int endomorphism, bool mode);
-  void checkAddresses(bool compressed, Int key, int i, Point p1);
-  void checkAddressesSSE(bool compressed, Int key, int i, Point p1, Point p2, Point p3, Point p4);
+  void checkAddresses(bool compressed, Int key, int i, Point p1, int thId = -1);
+  void checkAddressesSSE(bool compressed, Int key, int i, Point p1, Point p2, Point p3, Point p4, int thId = -1);
   void output(std::string addr, std::string pAddr, std::string pAddrHex);
   void outputHD(std::string addr, std::string pAddr, std::string pAddrHex, std::string mnemonic);
   bool isAlive(TH_PARAM *p);

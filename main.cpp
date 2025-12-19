@@ -44,7 +44,7 @@ void printUsage() {
   printf(" -b: Search both uncompressed or compressed addresses\n");
   printf(" -c: Case unsensitive search\n");
   printf(" -gpu: Enable gpu calculation\n");
-  printf(" -hd: Enable HD wallet mode (BIP39/BIP32/BIP44, requires -gpu)\n");
+  printf(" -hd: Enable HD wallet mode (BIP39/BIP32/BIP44)\n");
   printf(" -stop: Stop when all prefixes are found\n");
   printf(" -i inputfile: Get list of prefixes to search from specified file\n");
   printf(" -o outputfile: Output results to the specified file\n");
@@ -563,11 +563,8 @@ int main(int argc, char* argv[]) {
 
   printf("PoCX-VanitySearch v" RELEASE " - by EviLSeeD\n\n");
 
-  // Validate HD wallet mode requirements
-  if (hdWalletMode && !gpuEnable) {
-    printf("Error: HD wallet mode (-hd) requires GPU mode (-gpu)\n");
-    exit(-1);
-  }
+  // HD wallet mode works with both CPU and GPU
+  // No validation needed here
 
   if(gridSize.size()==0) {
     for (int i = 0; i < gpuId.size(); i++) {
