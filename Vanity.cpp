@@ -25,6 +25,8 @@
 #include "Timer.h"
 #include "hash/ripemd160.h"
 #include "DescriptorChecksum.h"
+#include "BIP39.h"
+#include "BIP32.h"
 #include <string.h>
 #include <math.h>
 #include <algorithm>
@@ -41,7 +43,8 @@ Point _2Gn;
 
 VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,string seed,int searchMode,
                            bool useGpu, bool stop, string outputFile, bool useSSE, uint32_t maxFound,
-                           uint64_t rekey, bool caseSensitive, Point &startPubKey, bool paranoiacSeed)
+                           uint64_t rekey, bool caseSensitive, Point &startPubKey, bool paranoiacSeed,
+                           bool hdWalletMode)
   :inputPrefixes(inputPrefixes) {
 
   this->secp = secp;
@@ -58,6 +61,7 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
   this->hasPattern = false;
   this->caseSensitive = caseSensitive;
   this->startPubKeySpecified = !startPubKey.isZero();
+  this->hdWalletMode = hdWalletMode;
 
   lastRekey = 0;
   prefixes.clear();
@@ -852,6 +856,90 @@ void VanitySearch::output(string addr,string pAddr,string pAddrHex) {
 
 // ----------------------------------------------------------------------------
 
+void VanitySearch::outputHD(string addr,string pAddr,string pAddrHex,string mnemonic) {
+
+#ifdef WIN64
+   WaitForSingleObject(ghMutex,INFINITE);
+#else
+  pthread_mutex_lock(&ghMutex);
+#endif
+
+  FILE *f = stdout;
+  bool needToClose = false;
+
+  if (outputFile.length() > 0) {
+    f = fopen(outputFile.c_str(), "a");
+    if (f == NULL) {
+      printf("Cannot open %s for writing\n", outputFile.c_str());
+      f = stdout;
+    } else {
+      needToClose = true;
+    }
+  }
+
+  if(!needToClose)
+    printf("\n");
+
+  fprintf(f, "PubAddress: %s\n", addr.c_str());
+  fprintf(f, "Mnemonic: %s\n", mnemonic.c_str());
+  fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
+
+  if (startPubKeySpecified) {
+
+    fprintf(f, "PartialPriv: %s\n", pAddr.c_str());
+
+  } else {
+
+    switch (searchType) {
+    case P2PKH:
+      fprintf(f, "Priv (WIF): p2pkh:%s\n", pAddr.c_str());
+      break;
+    case P2SH:
+      fprintf(f, "Priv (WIF): p2wpkh-p2sh:%s\n", pAddr.c_str());
+      break;
+    case BECH32:
+      fprintf(f, "Priv (WIF): p2wpkh:%s\n", pAddr.c_str());
+      break;
+    case POCX:
+      {
+        // Decode the private key to generate both mainnet and testnet WIFs
+        Int privKey;
+        privKey.SetBase16((char *)pAddrHex.c_str());
+        bool compressed = (searchMode == SEARCH_COMPRESSED);
+        
+        // Generate mainnet WIF
+        string mainnetWif = secp->GetPrivAddress(compressed, privKey);
+        // Generate testnet WIF
+        string testnetWif = secp->GetPrivAddressTestnet(compressed, privKey);
+        
+        // Calculate descriptor checksums using Bitcoin Core algorithm
+        string mainnetDescriptor = "wpkh(" + mainnetWif + ")";
+        string testnetDescriptor = "wpkh(" + testnetWif + ")";
+        
+        string mainnetChecksum = DescriptorChecksum(mainnetDescriptor);
+        string testnetChecksum = DescriptorChecksum(testnetDescriptor);
+        
+        fprintf(f, "Priv (WIF Mainnet): %s#%s\n", mainnetDescriptor.c_str(), mainnetChecksum.c_str());
+        fprintf(f, "Priv (WIF Testnet): %s#%s\n", testnetDescriptor.c_str(), testnetChecksum.c_str());
+      }
+      break;
+    }
+
+  }
+
+  if(needToClose)
+    fclose(f);
+
+#ifdef WIN64
+  ReleaseMutex(ghMutex);
+#else
+  pthread_mutex_unlock(&ghMutex);
+#endif
+
+}
+
+// ----------------------------------------------------------------------------
+
 void VanitySearch::updateFound() {
 
   // Check if all prefixes has been found
@@ -1088,6 +1176,97 @@ void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t in
           nbFoundKey++;
           updateFound();
         }
+
+      }
+
+    }
+
+  }
+
+}
+
+// ----------------------------------------------------------------------------
+
+void VanitySearch::checkAddrHD(int prefIdx, uint8_t *hash160, Int &key, int32_t incr, int endomorphism, bool mode, int thId) {
+
+  // HD wallet version of checkAddr that uses the stored mnemonic
+  if (hasPattern) {
+
+    // Wildcard search
+    string addr = secp->GetAddress(searchType, mode, hash160);
+
+    for (int i = 0; i < (int)inputPrefixes.size(); i++) {
+
+      if (Wildcard::match(addr.c_str(), inputPrefixes[i].c_str(), caseSensitive)) {
+
+        // Found it!
+        string pAddr = secp->GetPrivAddress(mode, key);
+        string pAddrHex = GetHex(key);
+        string mnemonic = hdMnemonics[thId];
+        outputHD(addr, pAddr, pAddrHex, mnemonic);
+        nbFoundKey++;
+        patternFound[i] = true;
+        updateFound();
+
+      }
+
+    }
+
+    return;
+
+  }
+
+  vector<PREFIX_ITEM> *pi = prefixes[prefIdx].items;
+
+  if (onlyFull) {
+
+    // Full addresses
+    for (int i = 0; i < (int)pi->size(); i++) {
+
+      if (stopWhenFound && *((*pi)[i].found))
+        continue;
+
+      if (ripemd160_comp_hash((*pi)[i].hash160, hash160)) {
+
+        // Found it!
+        *((*pi)[i].found) = true;
+        string addr = secp->GetAddress(searchType, mode, hash160);
+        string pAddr = secp->GetPrivAddress(mode, key);
+        string pAddrHex = GetHex(key);
+        string mnemonic = hdMnemonics[thId];
+        outputHD(addr, pAddr, pAddrHex, mnemonic);
+        nbFoundKey++;
+        updateFound();
+
+      }
+
+    }
+
+  } else {
+
+
+    char a[64];
+
+    string addr = secp->GetAddress(searchType, mode, hash160);
+
+    for (int i = 0; i < (int)pi->size(); i++) {
+
+      if (stopWhenFound && *((*pi)[i].found))
+        continue;
+
+      strncpy(a, addr.c_str(), (*pi)[i].prefixLength);
+      a[(*pi)[i].prefixLength] = 0;
+
+      if (strcmp((*pi)[i].prefix, a) == 0) {
+
+        // Found it!
+        *((*pi)[i].found) = true;
+        string pAddr = secp->GetPrivAddress(mode, key);
+        string pAddrHex = GetHex(key);
+        string mnemonic = hdMnemonics[thId];
+        outputHD(addr, pAddr, pAddrHex, mnemonic);
+        nbFoundKey++;
+        updateFound();
 
       }
 
@@ -1641,10 +1820,52 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
   vector<ITEM> found;
 
   printf("GPU: %s\n",g.deviceName.c_str());
+  
+  if (hdWalletMode) {
+    printf("HD Wallet Mode: BIP39/BIP32/BIP44 derivation enabled\n");
+    printf("Derivation Path: m/84'/0'/0'/0/0\n");
+    
+    // Load BIP39 wordlist
+    if (!BIP39::LoadWordlist("bip39_english.txt")) {
+      printf("Error: Failed to load BIP39 wordlist\n");
+      ph->hasStarted = true;
+      ph->isRunning = false;
+      return;
+    }
+    
+    // Generate mnemonics and seeds for each GPU thread
+    uint8_t *seeds = new uint8_t[nbThread * 64];
+    hdMnemonics.resize(nbThread);
+    
+    for (int i = 0; i < nbThread; i++) {
+      // Generate 12-word mnemonic
+      hdMnemonics[i] = BIP39::GenerateMnemonic12();
+      
+      // Convert mnemonic to 64-byte seed
+      BIP39::MnemonicToSeed(hdMnemonics[i], "", &seeds[i * 64]);
+    }
+    
+    // Enable HD wallet mode in GPU engine
+    g.SetHDWalletMode(true, 0, 0); // coinType=0 (Bitcoin mainnet), account=0
+    
+    // Load mnemonic seeds to GPU
+    ok = g.SetMnemonicSeeds(seeds, nbThread);
+    
+    delete[] seeds;
+    
+    if (!ok) {
+      printf("Error: Failed to set mnemonic seeds\n");
+      ph->hasStarted = true;
+      ph->isRunning = false;
+      return;
+    }
+  } else {
+    // Standard mode - use regular key generation
+    getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
+    ok = g.SetKeys(p);
+  }
 
   counters[thId] = 0;
-
-  getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
 
   g.SetSearchMode(searchMode);
   g.SetSearchType(searchType);
@@ -1657,16 +1878,14 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
       g.SetPrefix(usedPrefix);
   }
 
-  getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
-  ok = g.SetKeys(p);
   ph->rekeyRequest = false;
-
   ph->hasStarted = true;
 
   // GPU Thread
   while (ok && !endOfSearch) {
 
-    if (ph->rekeyRequest) {
+    if (ph->rekeyRequest && !hdWalletMode) {
+      // Only rekey in standard mode
       getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
       ok = g.SetKeys(p);
       ph->rekeyRequest = false;
@@ -1678,20 +1897,28 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
     for(int i=0;i<(int)found.size() && !endOfSearch;i++) {
 
       ITEM it = found[i];
-      checkAddr(*(prefix_t *)(it.hash), it.hash, keys[it.thId], it.incr, it.endo, it.mode);
+      if (hdWalletMode) {
+        // Use HD wallet version that includes mnemonic
+        checkAddrHD(*(prefix_t *)(it.hash), it.hash, keys[it.thId], it.incr, it.endo, it.mode, it.thId);
+      } else {
+        checkAddr(*(prefix_t *)(it.hash), it.hash, keys[it.thId], it.incr, it.endo, it.mode);
+      }
 
     }
 
-    if (ok) {
+    if (ok && !hdWalletMode) {
       for (int i = 0; i < nbThread; i++) {
         keys[i].Add((uint64_t)STEP_SIZE);
       }
       counters[thId] += 6ULL * STEP_SIZE * nbThread; // Point +  endo1 + endo2 + symetrics
+    } else if (ok && hdWalletMode) {
+      // In HD mode, counters work differently (no key increments)
+      counters[thId] += 6ULL * STEP_SIZE * nbThread;
     }
 
   }
 
-  // NEU: Explizite Synchronisation über Wrapper-Funktion
+  // NEU: Explizite Synchronisation ï¿½ber Wrapper-Funktion
   g.WaitForCompletion();
 
   delete[] keys;
@@ -1908,4 +2135,8 @@ string VanitySearch::GetHex(vector<unsigned char> &buffer) {
 
   return ret;
 
+}
+
+string VanitySearch::GetHex(Int &i) {
+  return i.GetBase16();
 }
