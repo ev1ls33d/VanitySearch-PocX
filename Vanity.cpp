@@ -1823,7 +1823,7 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
   
   if (hdWalletMode) {
     printf("HD Wallet Mode: BIP39/BIP32/BIP44 derivation enabled\n");
-    printf("Derivation Path: m/84'/0'/0'/0/0\n");
+    printf("Derivation Path: m/84'/0'/0'/0/[0-%d]\n", g.GetGroupSize() - 1);
     
     // Load BIP39 wordlist
     if (!BIP39::LoadWordlist("bip39_english.txt")) {
@@ -1833,8 +1833,8 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
       return;
     }
     
-    // Generate mnemonics and seeds for each GPU thread
-    uint8_t *seeds = new uint8_t[nbThread * 64];
+    // Generate mnemonics and derive keys on CPU
+    // Each thread will search a range of address indices from the same mnemonic
     hdMnemonics.resize(nbThread);
     
     for (int i = 0; i < nbThread; i++) {
@@ -1842,23 +1842,22 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
       hdMnemonics[i] = BIP39::GenerateMnemonic12();
       
       // Convert mnemonic to 64-byte seed
-      BIP39::MnemonicToSeed(hdMnemonics[i], "", &seeds[i * 64]);
+      uint8_t seed[64];
+      BIP39::MnemonicToSeed(hdMnemonics[i], "", seed);
+      
+      // Derive key at path m/84'/0'/0'/0/0 (first address)
+      BIP32::DerivePath(seed, 64, "m/84'/0'/0'/0/0", keys[i]);
+      
+      // Compute public key point for the starting key
+      Int k(keys + i);
+      // Starting key is at the middle of the group  
+      k.Add((uint64_t)(g.GetGroupSize() / 2));
+      p[i] = secp->ComputePublicKey(&k);
     }
     
-    // Enable HD wallet mode in GPU engine
-    g.SetHDWalletMode(true, 0, 0); // coinType=0 (Bitcoin mainnet), account=0
+    // Set keys like in standard mode
+    ok = g.SetKeys(p);
     
-    // Load mnemonic seeds to GPU
-    ok = g.SetMnemonicSeeds(seeds, nbThread);
-    
-    delete[] seeds;
-    
-    if (!ok) {
-      printf("Error: Failed to set mnemonic seeds\n");
-      ph->hasStarted = true;
-      ph->isRunning = false;
-      return;
-    }
   } else {
     // Standard mode - use regular key generation
     getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
@@ -1884,10 +1883,24 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
   // GPU Thread
   while (ok && !endOfSearch) {
 
-    if (ph->rekeyRequest && !hdWalletMode) {
-      // Only rekey in standard mode
-      getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
-      ok = g.SetKeys(p);
+    if (ph->rekeyRequest) {
+      if (hdWalletMode) {
+        // In HD mode, generate new mnemonics
+        for (int i = 0; i < nbThread; i++) {
+          hdMnemonics[i] = BIP39::GenerateMnemonic12();
+          uint8_t seed[64];
+          BIP39::MnemonicToSeed(hdMnemonics[i], "", seed);
+          BIP32::DerivePath(seed, 64, "m/84'/0'/0'/0/0", keys[i]);
+          Int k(keys + i);
+          k.Add((uint64_t)(g.GetGroupSize() / 2));
+          p[i] = secp->ComputePublicKey(&k);
+        }
+        ok = g.SetKeys(p);
+      } else {
+        // Standard mode rekey
+        getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
+        ok = g.SetKeys(p);
+      }
       ph->rekeyRequest = false;
     }
 
@@ -1906,14 +1919,11 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
 
     }
 
-    if (ok && !hdWalletMode) {
+    if (ok) {
       for (int i = 0; i < nbThread; i++) {
         keys[i].Add((uint64_t)STEP_SIZE);
       }
       counters[thId] += 6ULL * STEP_SIZE * nbThread; // Point +  endo1 + endo2 + symetrics
-    } else if (ok && hdWalletMode) {
-      // In HD mode, counters work differently (no key increments)
-      counters[thId] += 6ULL * STEP_SIZE * nbThread;
     }
 
   }
