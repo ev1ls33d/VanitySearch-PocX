@@ -18,6 +18,7 @@
 #include "sha256.h"
 #include <immintrin.h>
 #include <string.h>
+#include <cstdint>
 #include <stdint.h>
 
 namespace _sha256sse

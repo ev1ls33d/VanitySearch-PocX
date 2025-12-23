@@ -25,9 +25,12 @@
 #include "Timer.h"
 #include "hash/ripemd160.h"
 #include "DescriptorChecksum.h"
+#include "BIP39.h"
+#include "BIP32.h"
 #include <string.h>
 #include <math.h>
 #include <algorithm>
+#include <mutex>
 #ifndef WIN64
 #include <pthread.h>
 #endif
@@ -41,7 +44,8 @@ Point _2Gn;
 
 VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,string seed,int searchMode,
                            bool useGpu, bool stop, string outputFile, bool useSSE, uint32_t maxFound,
-                           uint64_t rekey, bool caseSensitive, Point &startPubKey, bool paranoiacSeed)
+                           uint64_t rekey, bool caseSensitive, Point &startPubKey, bool paranoiacSeed,
+                           bool hdWalletMode)
   :inputPrefixes(inputPrefixes) {
 
   this->secp = secp;
@@ -58,6 +62,7 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
   this->hasPattern = false;
   this->caseSensitive = caseSensitive;
   this->startPubKeySpecified = !startPubKey.isZero();
+  this->hdWalletMode = hdWalletMode;
 
   lastRekey = 0;
   prefixes.clear();
@@ -852,6 +857,90 @@ void VanitySearch::output(string addr,string pAddr,string pAddrHex) {
 
 // ----------------------------------------------------------------------------
 
+void VanitySearch::outputHD(string addr,string pAddr,string pAddrHex,string mnemonic) {
+
+#ifdef WIN64
+   WaitForSingleObject(ghMutex,INFINITE);
+#else
+  pthread_mutex_lock(&ghMutex);
+#endif
+
+  FILE *f = stdout;
+  bool needToClose = false;
+
+  if (outputFile.length() > 0) {
+    f = fopen(outputFile.c_str(), "a");
+    if (f == NULL) {
+      printf("Cannot open %s for writing\n", outputFile.c_str());
+      f = stdout;
+    } else {
+      needToClose = true;
+    }
+  }
+
+  if(!needToClose)
+    printf("\n");
+
+  fprintf(f, "PubAddress: %s\n", addr.c_str());
+  fprintf(f, "Mnemonic: %s\n", mnemonic.c_str());
+  fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
+
+  if (startPubKeySpecified) {
+
+    fprintf(f, "PartialPriv: %s\n", pAddr.c_str());
+
+  } else {
+
+    switch (searchType) {
+    case P2PKH:
+      fprintf(f, "Priv (WIF): p2pkh:%s\n", pAddr.c_str());
+      break;
+    case P2SH:
+      fprintf(f, "Priv (WIF): p2wpkh-p2sh:%s\n", pAddr.c_str());
+      break;
+    case BECH32:
+      fprintf(f, "Priv (WIF): p2wpkh:%s\n", pAddr.c_str());
+      break;
+    case POCX:
+      {
+        // Decode the private key to generate both mainnet and testnet WIFs
+        Int privKey;
+        privKey.SetBase16((char *)pAddrHex.c_str());
+        bool compressed = (searchMode == SEARCH_COMPRESSED);
+        
+        // Generate mainnet WIF
+        string mainnetWif = secp->GetPrivAddress(compressed, privKey);
+        // Generate testnet WIF
+        string testnetWif = secp->GetPrivAddressTestnet(compressed, privKey);
+        
+        // Calculate descriptor checksums using Bitcoin Core algorithm
+        string mainnetDescriptor = "wpkh(" + mainnetWif + ")";
+        string testnetDescriptor = "wpkh(" + testnetWif + ")";
+        
+        string mainnetChecksum = DescriptorChecksum(mainnetDescriptor);
+        string testnetChecksum = DescriptorChecksum(testnetDescriptor);
+        
+        fprintf(f, "Priv (WIF Mainnet): %s#%s\n", mainnetDescriptor.c_str(), mainnetChecksum.c_str());
+        fprintf(f, "Priv (WIF Testnet): %s#%s\n", testnetDescriptor.c_str(), testnetChecksum.c_str());
+      }
+      break;
+    }
+
+  }
+
+  if(needToClose)
+    fclose(f);
+
+#ifdef WIN64
+  ReleaseMutex(ghMutex);
+#else
+  pthread_mutex_unlock(&ghMutex);
+#endif
+
+}
+
+// ----------------------------------------------------------------------------
+
 void VanitySearch::updateFound() {
 
   // Check if all prefixes has been found
@@ -1099,6 +1188,97 @@ void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t in
 
 // ----------------------------------------------------------------------------
 
+void VanitySearch::checkAddrHD(int prefIdx, uint8_t *hash160, Int &key, int32_t incr, int endomorphism, bool mode, int thId) {
+
+  // HD wallet version of checkAddr that uses the stored mnemonic
+  if (hasPattern) {
+
+    // Wildcard search
+    string addr = secp->GetAddress(searchType, mode, hash160);
+
+    for (int i = 0; i < (int)inputPrefixes.size(); i++) {
+
+      if (Wildcard::match(addr.c_str(), inputPrefixes[i].c_str(), caseSensitive)) {
+
+        // Found it!
+        string pAddr = secp->GetPrivAddress(mode, key);
+        string pAddrHex = GetHex(key);
+        string mnemonic = hdMnemonics[thId];
+        outputHD(addr, pAddr, pAddrHex, mnemonic);
+        nbFoundKey++;
+        patternFound[i] = true;
+        updateFound();
+
+      }
+
+    }
+
+    return;
+
+  }
+
+  vector<PREFIX_ITEM> *pi = prefixes[prefIdx].items;
+
+  if (onlyFull) {
+
+    // Full addresses
+    for (int i = 0; i < (int)pi->size(); i++) {
+
+      if (stopWhenFound && *((*pi)[i].found))
+        continue;
+
+      if (ripemd160_comp_hash((*pi)[i].hash160, hash160)) {
+
+        // Found it!
+        *((*pi)[i].found) = true;
+        string addr = secp->GetAddress(searchType, mode, hash160);
+        string pAddr = secp->GetPrivAddress(mode, key);
+        string pAddrHex = GetHex(key);
+        string mnemonic = hdMnemonics[thId];
+        outputHD(addr, pAddr, pAddrHex, mnemonic);
+        nbFoundKey++;
+        updateFound();
+
+      }
+
+    }
+
+  } else {
+
+
+    char a[64];
+
+    string addr = secp->GetAddress(searchType, mode, hash160);
+
+    for (int i = 0; i < (int)pi->size(); i++) {
+
+      if (stopWhenFound && *((*pi)[i].found))
+        continue;
+
+      strncpy(a, addr.c_str(), (*pi)[i].prefixLength);
+      a[(*pi)[i].prefixLength] = 0;
+
+      if (strcmp((*pi)[i].prefix, a) == 0) {
+
+        // Found it!
+        *((*pi)[i].found) = true;
+        string pAddr = secp->GetPrivAddress(mode, key);
+        string pAddrHex = GetHex(key);
+        string mnemonic = hdMnemonics[thId];
+        outputHD(addr, pAddr, pAddrHex, mnemonic);
+        nbFoundKey++;
+        updateFound();
+
+      }
+
+    }
+
+  }
+
+}
+
+// ----------------------------------------------------------------------------
+
 #ifdef WIN64
 DWORD WINAPI _FindKey(LPVOID lpParam) {
 #else
@@ -1121,7 +1301,7 @@ void *_FindKeyGPU(void *lpParam) {
 
 // ----------------------------------------------------------------------------
 
-void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
+void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1, int thId) {
 
   unsigned char h0[20];
   Point pte1[1];
@@ -1130,8 +1310,13 @@ void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
   // Point
   secp->GetHash160(searchType,compressed, p1, h0);
   prefix_t pr0 = *(prefix_t *)h0;
-  if (hasPattern || prefixes[pr0].items)
-    checkAddr(pr0, h0, key, i, 0, compressed);
+  if (hasPattern || prefixes[pr0].items) {
+    if (hdWalletMode && thId >= 0) {
+      checkAddrHD(pr0, h0, key, i, 0, compressed, thId);
+    } else {
+      checkAddr(pr0, h0, key, i, 0, compressed);
+    }
+  }
 
   // Endomorphism #1
   pte1[0].x.ModMulK1(&p1.x, &beta);
@@ -1140,8 +1325,13 @@ void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
   secp->GetHash160(searchType, compressed, pte1[0], h0);
 
   pr0 = *(prefix_t *)h0;
-  if (hasPattern || prefixes[pr0].items)
-    checkAddr(pr0, h0, key, i, 1, compressed);
+  if (hasPattern || prefixes[pr0].items) {
+    if (hdWalletMode && thId >= 0) {
+      checkAddrHD(pr0, h0, key, i, 1, compressed, thId);
+    } else {
+      checkAddr(pr0, h0, key, i, 1, compressed);
+    }
+  }
 
   // Endomorphism #2
   pte2[0].x.ModMulK1(&p1.x, &beta2);
@@ -1150,16 +1340,26 @@ void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
   secp->GetHash160(searchType, compressed, pte2[0], h0);
 
   pr0 = *(prefix_t *)h0;
-  if (hasPattern || prefixes[pr0].items)
-    checkAddr(pr0, h0, key, i, 2, compressed);
+  if (hasPattern || prefixes[pr0].items) {
+    if (hdWalletMode && thId >= 0) {
+      checkAddrHD(pr0, h0, key, i, 2, compressed, thId);
+    } else {
+      checkAddr(pr0, h0, key, i, 2, compressed);
+    }
+  }
 
   // Curve symetrie
   // if (x,y) = k*G, then (x, -y) is -k*G
   p1.y.ModNeg();
   secp->GetHash160(searchType, compressed, p1, h0);
   pr0 = *(prefix_t *)h0;
-  if (hasPattern || prefixes[pr0].items)
-    checkAddr(pr0, h0, key, -i, 0, compressed);
+  if (hasPattern || prefixes[pr0].items) {
+    if (hdWalletMode && thId >= 0) {
+      checkAddrHD(pr0, h0, key, -i, 0, compressed, thId);
+    } else {
+      checkAddr(pr0, h0, key, -i, 0, compressed);
+    }
+  }
 
   // Endomorphism #1
   pte1[0].y.ModNeg();
@@ -1167,8 +1367,13 @@ void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
   secp->GetHash160(searchType, compressed, pte1[0], h0);
 
   pr0 = *(prefix_t *)h0;
-  if (hasPattern || prefixes[pr0].items)
-    checkAddr(pr0, h0, key, -i, 1, compressed);
+  if (hasPattern || prefixes[pr0].items) {
+    if (hdWalletMode && thId >= 0) {
+      checkAddrHD(pr0, h0, key, -i, 1, compressed, thId);
+    } else {
+      checkAddr(pr0, h0, key, -i, 1, compressed);
+    }
+  }
 
   // Endomorphism #2
   pte2[0].y.ModNeg();
@@ -1176,14 +1381,19 @@ void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
   secp->GetHash160(searchType, compressed, pte2[0], h0);
 
   pr0 = *(prefix_t *)h0;
-  if (hasPattern || prefixes[pr0].items)
-    checkAddr(pr0, h0, key, -i, 2, compressed);
+  if (hasPattern || prefixes[pr0].items) {
+    if (hdWalletMode && thId >= 0) {
+      checkAddrHD(pr0, h0, key, -i, 2, compressed, thId);
+    } else {
+      checkAddr(pr0, h0, key, -i, 2, compressed);
+    }
+  }
 
 }
 
 // ----------------------------------------------------------------------------
 
-void VanitySearch::checkAddressesSSE(bool compressed,Int key, int i, Point p1, Point p2, Point p3, Point p4) {
+void VanitySearch::checkAddressesSSE(bool compressed,Int key, int i, Point p1, Point p2, Point p3, Point p4, int thId) {
 
   unsigned char h0[20];
   unsigned char h1[20];
@@ -1413,13 +1623,58 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
   int thId = ph->threadId;
   counters[thId] = 0;
 
+  // HD Wallet Mode initialization
+  if (hdWalletMode) {
+    // Load BIP39 wordlist (thread-safe, only once globally)
+    static std::mutex wordlistMutex;
+    static bool wordlistLoaded = false;
+    
+    if (!wordlistLoaded) {
+      std::lock_guard<std::mutex> lock(wordlistMutex);
+      if (!wordlistLoaded) {  // Double-check after acquiring lock
+        if (!BIP39::LoadWordlist("bip39_english.txt")) {
+          printf("CPU Thread %d: Error - Failed to load BIP39 wordlist\n", thId);
+          ph->hasStarted = true;
+          ph->isRunning = false;
+          return;
+        }
+        wordlistLoaded = true;
+      }
+    }
+    
+    // Ensure hdMnemonics vector is large enough
+    if ((int)hdMnemonics.size() <= thId) {
+      hdMnemonics.resize(thId + 1);
+    }
+    
+    // Generate a unique mnemonic for this CPU thread
+    hdMnemonics[thId] = BIP39::GenerateMnemonic12();
+    if (thId == 0) {
+      printf("HD Wallet Mode (CPU): BIP39/BIP32/BIP44 derivation enabled\n");
+      printf("Derivation Path: m/84'/0'/0'/0/[0-%d]\n", CPU_GRP_SIZE - 1);
+    }
+  }
+
   // CPU Thread
   IntGroup *grp = new IntGroup(CPU_GRP_SIZE/2+1);
 
   // Group Init
   Int  key;
   Point startP;
-  getCPUStartingKey(thId,key,startP);
+  
+  if (hdWalletMode) {
+    // Derive key from mnemonic
+    uint8_t seed[64];
+    BIP39::MnemonicToSeed(hdMnemonics[thId], "", seed);
+    BIP32::DerivePath(seed, 64, "m/84'/0'/0'/0/0", key);
+    
+    // Compute public key point
+    Int km(&key);
+    km.Add((uint64_t)CPU_GRP_SIZE / 2);
+    startP = secp->ComputePublicKey(&km);
+  } else {
+    getCPUStartingKey(thId,key,startP);
+  }
 
   Int dx[CPU_GRP_SIZE/2+1];
   Point pts[CPU_GRP_SIZE];
@@ -1438,7 +1693,18 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
   while (!endOfSearch) {
 
     if (ph->rekeyRequest) {
-      getCPUStartingKey(thId, key, startP);
+      if (hdWalletMode) {
+        // Generate new mnemonic
+        hdMnemonics[thId] = BIP39::GenerateMnemonic12();
+        uint8_t seed[64];
+        BIP39::MnemonicToSeed(hdMnemonics[thId], "", seed);
+        BIP32::DerivePath(seed, 64, "m/84'/0'/0'/0/0", key);
+        Int km(&key);
+        km.Add((uint64_t)CPU_GRP_SIZE / 2);
+        startP = secp->ComputePublicKey(&km);
+      } else {
+        getCPUStartingKey(thId, key, startP);
+      }
       ph->rekeyRequest = false;
     }
 
@@ -1559,14 +1825,14 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
 
         switch (searchMode) {
           case SEARCH_COMPRESSED:
-            checkAddressesSSE(true, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
+            checkAddressesSSE(true, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3], thId);
             break;
           case SEARCH_UNCOMPRESSED:
-            checkAddressesSSE(false, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
+            checkAddressesSSE(false, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3], thId);
             break;
           case SEARCH_BOTH:
-            checkAddressesSSE(true, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
-            checkAddressesSSE(false, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
+            checkAddressesSSE(true, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3], thId);
+            checkAddressesSSE(false, key, i, pts[i], pts[i + 1], pts[i + 2], pts[i + 3], thId);
             break;
         }
 
@@ -1578,14 +1844,14 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
 
         switch (searchMode) {
         case SEARCH_COMPRESSED:
-          checkAddresses(true, key, i, pts[i]);
+          checkAddresses(true, key, i, pts[i], thId);
           break;
         case SEARCH_UNCOMPRESSED:
-          checkAddresses(false, key, i, pts[i]);
+          checkAddresses(false, key, i, pts[i], thId);
           break;
         case SEARCH_BOTH:
-          checkAddresses(true, key, i, pts[i]);
-          checkAddresses(false, key, i, pts[i]);
+          checkAddresses(true, key, i, pts[i], thId);
+          checkAddresses(false, key, i, pts[i], thId);
           break;
         }
 
@@ -1593,8 +1859,21 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
 
     }
 
-    key.Add((uint64_t)CPU_GRP_SIZE);
-    counters[thId]+= 6*CPU_GRP_SIZE; // Point + endo #1 + endo #2 + Symetric point + endo #1 + endo #2
+    if (hdWalletMode) {
+      // In HD mode, generate a new mnemonic instead of incrementing
+      hdMnemonics[thId] = BIP39::GenerateMnemonic12();
+      uint8_t seed[64];
+      BIP39::MnemonicToSeed(hdMnemonics[thId], "", seed);
+      BIP32::DerivePath(seed, 64, "m/84'/0'/0'/0/0", key);
+      Int km(&key);
+      km.Add((uint64_t)CPU_GRP_SIZE / 2);
+      startP = secp->ComputePublicKey(&km);
+      counters[thId]+= 6*CPU_GRP_SIZE; // Count as if we checked all positions
+    } else {
+      // Standard mode: increment key
+      key.Add((uint64_t)CPU_GRP_SIZE);
+      counters[thId]+= 6*CPU_GRP_SIZE; // Point + endo #1 + endo #2 + Symetric point + endo #1 + endo #2
+    }
 
   }
 
@@ -1641,10 +1920,51 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
   vector<ITEM> found;
 
   printf("GPU: %s\n",g.deviceName.c_str());
+  
+  if (hdWalletMode) {
+    printf("HD Wallet Mode: BIP39/BIP32/BIP44 derivation enabled\n");
+    printf("Derivation Path: m/84'/0'/0'/0/[0-%d]\n", g.GetGroupSize() - 1);
+    
+    // Load BIP39 wordlist
+    if (!BIP39::LoadWordlist("bip39_english.txt")) {
+      printf("Error: Failed to load BIP39 wordlist\n");
+      ph->hasStarted = true;
+      ph->isRunning = false;
+      return;
+    }
+    
+    // Generate mnemonics and derive keys on CPU
+    // Each thread will search a range of address indices from the same mnemonic
+    hdMnemonics.resize(nbThread);
+    
+    for (int i = 0; i < nbThread; i++) {
+      // Generate 12-word mnemonic
+      hdMnemonics[i] = BIP39::GenerateMnemonic12();
+      
+      // Convert mnemonic to 64-byte seed
+      uint8_t seed[64];
+      BIP39::MnemonicToSeed(hdMnemonics[i], "", seed);
+      
+      // Derive key at path m/84'/0'/0'/0/0 (first address)
+      BIP32::DerivePath(seed, 64, "m/84'/0'/0'/0/0", keys[i]);
+      
+      // Compute public key point for the starting key
+      Int k(keys + i);
+      // Starting key is at the middle of the group  
+      k.Add((uint64_t)(g.GetGroupSize() / 2));
+      p[i] = secp->ComputePublicKey(&k);
+    }
+    
+    // Set keys like in standard mode
+    ok = g.SetKeys(p);
+    
+  } else {
+    // Standard mode - use regular key generation
+    getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
+    ok = g.SetKeys(p);
+  }
 
   counters[thId] = 0;
-
-  getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
 
   g.SetSearchMode(searchMode);
   g.SetSearchType(searchType);
@@ -1657,18 +1977,30 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
       g.SetPrefix(usedPrefix);
   }
 
-  getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
-  ok = g.SetKeys(p);
   ph->rekeyRequest = false;
-
   ph->hasStarted = true;
 
   // GPU Thread
   while (ok && !endOfSearch) {
 
     if (ph->rekeyRequest) {
-      getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
-      ok = g.SetKeys(p);
+      if (hdWalletMode) {
+        // In HD mode, generate new mnemonics
+        for (int i = 0; i < nbThread; i++) {
+          hdMnemonics[i] = BIP39::GenerateMnemonic12();
+          uint8_t seed[64];
+          BIP39::MnemonicToSeed(hdMnemonics[i], "", seed);
+          BIP32::DerivePath(seed, 64, "m/84'/0'/0'/0/0", keys[i]);
+          Int k(keys + i);
+          k.Add((uint64_t)(g.GetGroupSize() / 2));
+          p[i] = secp->ComputePublicKey(&k);
+        }
+        ok = g.SetKeys(p);
+      } else {
+        // Standard mode rekey
+        getGPUStartingKeys(thId, g.GetGroupSize(), nbThread, keys, p);
+        ok = g.SetKeys(p);
+      }
       ph->rekeyRequest = false;
     }
 
@@ -1678,7 +2010,12 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
     for(int i=0;i<(int)found.size() && !endOfSearch;i++) {
 
       ITEM it = found[i];
-      checkAddr(*(prefix_t *)(it.hash), it.hash, keys[it.thId], it.incr, it.endo, it.mode);
+      if (hdWalletMode) {
+        // Use HD wallet version that includes mnemonic
+        checkAddrHD(*(prefix_t *)(it.hash), it.hash, keys[it.thId], it.incr, it.endo, it.mode, it.thId);
+      } else {
+        checkAddr(*(prefix_t *)(it.hash), it.hash, keys[it.thId], it.incr, it.endo, it.mode);
+      }
 
     }
 
@@ -1691,7 +2028,7 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
 
   }
 
-  // NEU: Explizite Synchronisation über Wrapper-Funktion
+  // NEU: Explizite Synchronisation ï¿½ber Wrapper-Funktion
   g.WaitForCompletion();
 
   delete[] keys;
@@ -1908,4 +2245,8 @@ string VanitySearch::GetHex(vector<unsigned char> &buffer) {
 
   return ret;
 
+}
+
+string VanitySearch::GetHex(Int &i) {
+  return i.GetBase16();
 }

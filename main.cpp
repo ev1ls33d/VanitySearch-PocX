@@ -33,7 +33,7 @@ using namespace std;
 
 void printUsage() {
 
-  printf("VanitySeacrh [-check] [-v] [-u] [-b] [-c] [-gpu] [-stop] [-i inputfile]\n");
+  printf("VanitySeacrh [-check] [-v] [-u] [-b] [-c] [-gpu] [-hd] [-stop] [-i inputfile]\n");
   printf("             [-gpuId gpuId1[,gpuId2,...]] [-g g1x,g1y,[,g2x,g2y,...]]\n");
   printf("             [-o outputfile] [-m maxFound] [-ps seed] [-s seed] [-t nbThread]\n");
   printf("             [-nosse] [-r rekey] [-check] [-kp] [-sp startPubKey]\n");
@@ -44,6 +44,7 @@ void printUsage() {
   printf(" -b: Search both uncompressed or compressed addresses\n");
   printf(" -c: Case unsensitive search\n");
   printf(" -gpu: Enable gpu calculation\n");
+  printf(" -hd: Enable HD wallet mode (BIP39/BIP32/BIP44)\n");
   printf(" -stop: Stop when all prefixes are found\n");
   printf(" -i inputfile: Get list of prefixes to search from specified file\n");
   printf(" -o outputfile: Output results to the specified file\n");
@@ -395,6 +396,7 @@ int main(int argc, char* argv[]) {
 
   int a = 1;
   bool gpuEnable = false;
+  bool hdWalletMode = false;
   bool stop = false;
   int searchMode = SEARCH_COMPRESSED;
   vector<int> gpuId = {0};
@@ -417,6 +419,9 @@ int main(int argc, char* argv[]) {
 
     if (strcmp(argv[a], "-gpu")==0) {
       gpuEnable = true;
+      a++;
+    } else if (strcmp(argv[a], "-hd")==0) {
+      hdWalletMode = true;
       a++;
     } else if (strcmp(argv[a], "-gpuId")==0) {
       a++;
@@ -558,6 +563,9 @@ int main(int argc, char* argv[]) {
 
   printf("PoCX-VanitySearch v" RELEASE " - by EviLSeeD\n\n");
 
+  // HD wallet mode works with both CPU and GPU
+  // No validation needed here
+
   if(gridSize.size()==0) {
     for (int i = 0; i < gpuId.size(); i++) {
       gridSize.push_back(-1);
@@ -581,7 +589,7 @@ int main(int argc, char* argv[]) {
   }
 
   VanitySearch *v = new VanitySearch(secp, prefix, seed, searchMode, gpuEnable, stop, outputFile, sse,
-    maxFound, rekey, caseSensitive, startPuKey, paranoiacSeed);
+    maxFound, rekey, caseSensitive, startPuKey, paranoiacSeed, hdWalletMode);
   v->Search(nbCPUThread,gpuId,gridSize);
 
   return 0;

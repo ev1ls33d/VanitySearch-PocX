@@ -63,7 +63,7 @@ class GPUEngine {
 public:
 
   GPUEngine(int nbThreadGroup,int nbThreadPerGroup,int gpuId,uint32_t maxFound,bool rekey);
-  void GPUEngine::WaitForCompletion();
+  void WaitForCompletion();
   ~GPUEngine();
   void SetPrefix(std::vector<prefix_t> prefixes);
   void SetPrefix(std::vector<LPREFIX> prefixes,uint32_t totalPrefix);
@@ -71,6 +71,8 @@ public:
   void SetSearchMode(int searchMode);
   void SetSearchType(int searchType);
   void SetPattern(const char *pattern);
+  void SetHDWalletMode(bool enabled, uint32_t coinType = 0, uint32_t account = 0);
+  bool SetMnemonicSeeds(uint8_t *seeds, int count);
   bool Launch(std::vector<ITEM> &prefixFound,bool spinWait=false);
   int GetNbThread();
   int GetGroupSize();
@@ -108,6 +110,9 @@ private:
   uint32_t outputSize;
   std::string pattern;
   bool hasPattern;
+  bool hdWalletMode;
+  uint32_t hdCoinType;
+  uint32_t hdAccount;
 
 };
 

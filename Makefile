@@ -7,7 +7,8 @@ SRC = Base58.cpp IntGroup.cpp main.cpp Random.cpp \
       Timer.cpp Int.cpp IntMod.cpp Point.cpp SECP256K1.cpp \
       Vanity.cpp GPU/GPUGenerate.cpp hash/ripemd160.cpp \
       hash/sha256.cpp hash/sha512.cpp hash/ripemd160_sse.cpp \
-      hash/sha256_sse.cpp Bech32.cpp Wildcard.cpp
+      hash/sha256_sse.cpp Bech32.cpp Wildcard.cpp BIP39.cpp BIP32.cpp \
+      DescriptorChecksum.cpp
 
 OBJDIR = obj
 
@@ -18,7 +19,7 @@ OBJET = $(addprefix $(OBJDIR)/, \
         IntMod.o Point.o SECP256K1.o Vanity.o GPU/GPUGenerate.o \
         hash/ripemd160.o hash/sha256.o hash/sha512.o \
         hash/ripemd160_sse.o hash/sha256_sse.o \
-        GPU/GPUEngine.o Bech32.o Wildcard.o)
+        GPU/GPUEngine.o Bech32.o Wildcard.o BIP39.o BIP32.o DescriptorChecksum.o)
 
 else
 
@@ -26,7 +27,7 @@ OBJET = $(addprefix $(OBJDIR)/, \
         Base58.o IntGroup.o main.o Random.o Timer.o Int.o \
         IntMod.o Point.o SECP256K1.o Vanity.o GPU/GPUGenerate.o \
         hash/ripemd160.o hash/sha256.o hash/sha512.o \
-        hash/ripemd160_sse.o hash/sha256_sse.o Bech32.o Wildcard.o)
+        hash/ripemd160_sse.o hash/sha256_sse.o Bech32.o Wildcard.o BIP39.o BIP32.o DescriptorChecksum.o)
 
 endif
 
@@ -69,11 +70,21 @@ endif
 $(OBJDIR)/%.o : %.cpp
 	$(CXX) $(CXXFLAGS) -o $@ -c $<
 
-all: VanitySearch
+all: VanitySearch test_hd
 
 VanitySearch: $(OBJET)
 	@echo Making VanitySearch...
 	$(CXX) $(OBJET) $(LFLAGS) -o VanitySearch
+
+# Test program for HD wallet functionality
+TEST_HD_OBJ = $(addprefix $(OBJDIR)/, \
+        Base58.o Random.o Timer.o Int.o IntMod.o Point.o SECP256K1.o \
+        hash/ripemd160.o hash/sha256.o hash/sha512.o hash/ripemd160_sse.o \
+        hash/sha256_sse.o Bech32.o BIP39.o BIP32.o DescriptorChecksum.o test_hd.o)
+
+test_hd: $(TEST_HD_OBJ)
+	@echo Making test_hd...
+	$(CXX) $(TEST_HD_OBJ) $(LFLAGS) -o test_hd
 
 $(OBJET): | $(OBJDIR) $(OBJDIR)/GPU $(OBJDIR)/hash
 
@@ -91,4 +102,5 @@ clean:
 	@rm -f obj/*.o
 	@rm -f obj/GPU/*.o
 	@rm -f obj/hash/*.o
+	@rm -f VanitySearch test_hd
 
