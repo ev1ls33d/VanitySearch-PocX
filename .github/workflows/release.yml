@@ -36,13 +36,14 @@ jobs:
         shell: powershell
         run: |
           $projectFile = 'VanitySearch.vcxproj'
+          $targetVersion = '${{ env.CUDA_VERSION }}'.Split('.')[0..1] -join '.'
           $content = Get-Content $projectFile -Raw
-          $updated = $content -replace 'CUDA 13\.1', 'CUDA 12.6'
+          $updated = $content -replace 'CUDA 13\.1', "CUDA $targetVersion"
           if ($content -eq $updated) {
             Write-Warning "No CUDA version references found to update"
           } else {
             Set-Content $projectFile $updated
-            Write-Host "Successfully updated CUDA version references"
+            Write-Host "Successfully updated CUDA version references to $targetVersion"
           }
 
       - name: Build VanitySearch
@@ -155,11 +156,9 @@ jobs:
           zip -r ../../release-files/VanitySearch-Windows-CUDA.zip .
           cd ../..
           # Linux
-          cp artifacts/VanitySearch-Linux-CUDA/VanitySearch-Linux-CUDA.tar.gz \
-            release-files/
+          cp artifacts/VanitySearch-Linux-CUDA/VanitySearch-Linux-CUDA.tar.gz release-files/
           # macOS
-          cp artifacts/VanitySearch-macOS/VanitySearch-macOS.tar.gz \
-            release-files/
+          cp artifacts/VanitySearch-macOS/VanitySearch-macOS.tar.gz release-files/
 
       - name: Get version
         id: get_version
