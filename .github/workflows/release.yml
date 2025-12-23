@@ -65,7 +65,7 @@ jobs:
           path: release/*
 
   build-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout code
@@ -76,7 +76,7 @@ jobs:
         with:
           cuda: ${{ env.CUDA_VERSION }}
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "driver"]'
+          sub-packages: '["nvcc", "cudart"]'
           linux-local-args: '["--toolkit"]'
 
       - name: Install build dependencies
@@ -104,7 +104,7 @@ jobs:
           path: VanitySearch-Linux-CUDA.tar.gz
 
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-13
 
     steps:
       - name: Checkout code
@@ -114,9 +114,9 @@ jobs:
         run: |
           brew install gcc make
 
-      - name: Build VanitySearch (CPU-only, static linking)
+      - name: Build VanitySearch (CPU-only)
         run: |
-          make all CXX=g++-13 LFLAGS="-lpthread -static-libgcc -static-libstdc++"
+          make all CXX=g++-13 CXXFLAGS="-m64 -mssse3 -Wno-write-strings -O2 -I." LFLAGS="-lpthread"
 
       - name: Package artifacts
         run: |
@@ -196,14 +196,13 @@ jobs:
             - Supports NVIDIA GPUs (all compute capabilities via --gpu-architecture=all)
             - **Standalone binary**: Statically linked CUDA runtime and C++ libraries
             - No additional dependencies required
-            - Tested on Ubuntu 20.04+
+            - Tested on Ubuntu 22.04+
 
             #### macOS
             - CPU-only build (CUDA not available on macOS)
-            - **Standalone binary**: Statically linked C++ libraries
-            - No additional dependencies required
+            - Built with GCC from Homebrew on Intel Mac
             - No GPU acceleration support
-            - Runs on Apple Silicon and Intel Macs
+            - Runs on Intel Macs (x64)
 
             ### Usage
 
