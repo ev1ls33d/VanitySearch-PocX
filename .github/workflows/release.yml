@@ -107,40 +107,8 @@ jobs:
           name: VanitySearch-Linux-CUDA
           path: VanitySearch-Linux-CUDA.tar.gz
 
-  build-macos:
-    runs-on: macos-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: |
-          brew install gcc make
-
-      - name: Build VanitySearch (CPU-only)
-        run: |
-          make all CXX=g++-13 CXXFLAGS="-m64 -Wno-write-strings -O2 -I." LFLAGS="-lpthread"
-
-      - name: Package artifacts
-        run: |
-          mkdir -p release
-          cp VanitySearch release/
-          cp LICENSE.txt release/
-          cp README.md release/
-          chmod +x release/VanitySearch
-          tar -czf VanitySearch-macOS.tar.gz -C release .
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: VanitySearch-macOS
-          path: VanitySearch-macOS.tar.gz
-
   create-release:
-    needs: [build-windows, build-linux, build-macos]
+    needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
