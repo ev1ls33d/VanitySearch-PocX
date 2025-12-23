@@ -1,0 +1,219 @@
+name: Release Build
+
+env:
+  CUDA_VERSION: '12.6.2'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for the release'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "visual_studio_integration"]'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Patch CUDA version in project file
+        shell: powershell
+        run: |
+          $projectFile = 'VanitySearch.vcxproj'
+          $targetVersion = '${{ env.CUDA_VERSION }}'.Split('.')[0..1] -join '.'
+          $content = Get-Content $projectFile -Raw
+          $updated = $content -replace 'CUDA 13\.1', "CUDA $targetVersion"
+          if ($content -eq $updated) {
+            Write-Warning "No CUDA version references found to update"
+          } else {
+            Set-Content $projectFile $updated
+            Write-Host "Successfully updated CUDA version references to $targetVersion"
+          }
+
+      - name: Build VanitySearch with static linking
+        shell: cmd
+        run: |
+          msbuild VanitySearch.sln /p:Configuration=Release /p:Platform=x64 /p:RuntimeLibrary=MultiThreaded
+
+      - name: Package artifacts
+        run: |
+          mkdir release
+          copy x64\Release\VanitySearch.exe release\
+          copy LICENSE.txt release\
+          copy README.md release\
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VanitySearch-Windows-CUDA
+          path: release/*
+
+  build-linux:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.16
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "driver"]'
+          linux-local-args: '["--toolkit"]'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++ make
+
+      - name: Build VanitySearch with CUDA (static linking)
+        run: |
+          make gpu=1 CUDA=/usr/local/cuda all LFLAGS="-lpthread -L/usr/local/cuda/lib64 -lcudart_static -ldl -lrt -static-libgcc -static-libstdc++"
+
+      - name: Package artifacts
+        run: |
+          mkdir -p release
+          cp VanitySearch release/
+          cp LICENSE.txt release/
+          cp README.md release/
+          chmod +x release/VanitySearch
+          tar -czf VanitySearch-Linux-CUDA.tar.gz -C release .
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VanitySearch-Linux-CUDA
+          path: VanitySearch-Linux-CUDA.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          brew install gcc make
+
+      - name: Build VanitySearch (CPU-only, static linking)
+        run: |
+          make all CXX=g++-13 LFLAGS="-lpthread -static-libgcc -static-libstdc++"
+
+      - name: Package artifacts
+        run: |
+          mkdir -p release
+          cp VanitySearch release/
+          cp LICENSE.txt release/
+          cp README.md release/
+          chmod +x release/VanitySearch
+          tar -czf VanitySearch-macOS.tar.gz -C release .
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VanitySearch-macOS
+          path: VanitySearch-macOS.tar.gz
+
+  create-release:
+    needs: [build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          # Windows
+          cd artifacts/VanitySearch-Windows-CUDA
+          zip -r ../../release-files/VanitySearch-Windows-CUDA.zip .
+          cd ../..
+          # Linux
+          cp artifacts/VanitySearch-Linux-CUDA/VanitySearch-Linux-CUDA.tar.gz release-files/
+          # macOS
+          cp artifacts/VanitySearch-macOS/VanitySearch-macOS.tar.gz release-files/
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## VanitySearch-PoCX Release ${{ steps.get_version.outputs.VERSION }}
+
+            ### Downloads
+
+            - **Windows (CUDA)**: `VanitySearch-Windows-CUDA.zip`
+            - **Linux (CUDA)**: `VanitySearch-Linux-CUDA.tar.gz`
+            - **macOS (CPU-only)**: `VanitySearch-macOS.tar.gz`
+
+            ### Platform Details
+
+            #### Windows
+            - Built with CUDA ${{ env.CUDA_VERSION }}
+            - Supports NVIDIA GPUs (Compute Capability 5.0-9.0)
+            - **Standalone binary**: Statically linked with no external dependencies
+            - No CUDA Runtime installation required
+
+            #### Linux
+            - Built with CUDA ${{ env.CUDA_VERSION }}
+            - Supports NVIDIA GPUs (all compute capabilities via --gpu-architecture=all)
+            - **Standalone binary**: Statically linked CUDA runtime and C++ libraries
+            - No additional dependencies required
+            - Tested on Ubuntu 20.04+
+
+            #### macOS
+            - CPU-only build (CUDA not available on macOS)
+            - **Standalone binary**: Statically linked C++ libraries
+            - No additional dependencies required
+            - No GPU acceleration support
+            - Runs on Apple Silicon and Intel Macs
+
+            ### Usage
+
+            See [README.md](https://github.com/ev1ls33d/VanitySearch-PocX/blob/main/README.md)
+            for detailed usage instructions.
+          files: |
+            release-files/VanitySearch-Windows-CUDA.zip
+            release-files/VanitySearch-Linux-CUDA.tar.gz
+            release-files/VanitySearch-macOS.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
