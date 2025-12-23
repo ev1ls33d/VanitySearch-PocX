@@ -61,7 +61,7 @@ Alternatively, you can manually trigger the workflow from the GitHub Actions UI:
 
 ### Linux Build
 
-- **Runner**: `ubuntu-20.04`
+- **Runner**: `ubuntu-22.04`
 - **CUDA Version**: 12.6.2
 - **Build Tool**: GNU Make + GCC
 - **Compute Capability**: All architectures (via `--gpu-architecture=all`)
@@ -76,17 +76,17 @@ Alternatively, you can manually trigger the workflow from the GitHub Actions UI:
 
 ### macOS Build
 
-- **Runner**: `macos-latest`
+- **Runner**: `macos-13` (Intel x64)
 - **CUDA Version**: N/A (CPU-only)
 - **Build Tool**: GNU Make + GCC 13
-- **Static Linking**: Yes - libgcc and libstdc++ statically linked
+- **Static Linking**: No - dynamic linking (macOS does not support static linking of C++ libraries)
 - **Output**: `VanitySearch-macOS.tar.gz`
 - **Contents**: 
-  - `VanitySearch` (standalone executable, no shared library dependencies)
+  - `VanitySearch` (executable for Intel Macs)
   - `LICENSE.txt`
   - `README.md`
 
-**Note**: macOS does not support NVIDIA CUDA. This is a CPU-only build without GPU acceleration, but is fully standalone.
+**Note**: macOS does not support NVIDIA CUDA. This is a CPU-only build without GPU acceleration. The build targets Intel Macs (x64) because the code uses x86-specific SSE/SSSE3 instructions that are not available on Apple Silicon (ARM64).
 
 ## Workflow Steps
 
@@ -116,9 +116,9 @@ All binaries produced by this workflow are **fully standalone** with no external
 - Result: Single binary with no shared library dependencies
 
 **macOS:**
-- Uses `-static-libgcc -static-libstdc++` linker flags
-- Statically links libgcc and libstdc++
-- Result: Single binary with no shared library dependencies
+- Uses dynamic linking (static linking not supported on macOS)
+- Requires Intel Mac (x64) due to SSE/SSSE3 instruction requirements
+- Result: Single binary for Intel Macs
 
 ### Benefits
 
