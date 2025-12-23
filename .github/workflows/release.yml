@@ -67,7 +67,7 @@ jobs:
           path: release/*
 
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
 
@@ -108,7 +108,7 @@ jobs:
           path: VanitySearch-Linux-CUDA.tar.gz
 
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-latest
     permissions:
       contents: read
 
