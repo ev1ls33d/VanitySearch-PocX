@@ -62,9 +62,9 @@ class GPUEngine {
 
 public:
 
-  GPUEngine(int nbThreadGroup,int nbThreadPerGroup,int gpuId,uint32_t maxFound,bool rekey);
-  void GPUEngine::WaitForCompletion();
+  GPUEngine(int nbThreadGroup,int nbThreadPerGroup,int gpuId,uint32_t maxFound,bool rekey);  
   ~GPUEngine();
+  void WaitForCompletion();
   void SetPrefix(std::vector<prefix_t> prefixes);
   void SetPrefix(std::vector<LPREFIX> prefixes,uint32_t totalPrefix);
   bool SetKeys(Point *p);
@@ -74,7 +74,6 @@ public:
   bool Launch(std::vector<ITEM> &prefixFound,bool spinWait=false);
   int GetNbThread();
   int GetGroupSize();
-
   bool Check(Secp256K1 *secp);
   std::string deviceName;
 
