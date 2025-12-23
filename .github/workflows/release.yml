@@ -13,10 +13,6 @@ on:
         description: 'Version tag for the release'
         required: true
         default: 'v1.0.0'
-      compute_capability:
-        description: 'CUDA Compute Capability (e.g., 8.6, 8.9, 9.0)'
-        required: false
-        default: '8.6'
 
 jobs:
   build-windows:
@@ -39,8 +35,15 @@ jobs:
       - name: Patch CUDA version in project file
         shell: powershell
         run: |
-          $content = Get-Content VanitySearch.vcxproj
-          $content -replace 'CUDA 13.1', 'CUDA 12.6' | Set-Content VanitySearch.vcxproj
+          $projectFile = 'VanitySearch.vcxproj'
+          $content = Get-Content $projectFile -Raw
+          $updated = $content -replace 'CUDA 13\.1', 'CUDA 12.6'
+          if ($content -eq $updated) {
+            Write-Warning "No CUDA version references found to update"
+          } else {
+            Set-Content $projectFile $updated
+            Write-Host "Successfully updated CUDA version references"
+          }
 
       - name: Build VanitySearch
         shell: cmd
@@ -82,8 +85,7 @@ jobs:
 
       - name: Build VanitySearch with CUDA
         run: |
-          CCAP=${{ github.event.inputs.compute_capability || '8.6' }}
-          make gpu=1 CCAP=${CCAP} CUDA=/usr/local/cuda all
+          make gpu=1 CUDA=/usr/local/cuda all
 
       - name: Package artifacts
         run: |
@@ -191,7 +193,7 @@ jobs:
 
             #### Linux
             - Built with CUDA ${{ env.CUDA_VERSION }}
-            - Supports NVIDIA GPUs (Compute Capability ${{ github.event.inputs.compute_capability || '8.6' }}+)
+            - Supports NVIDIA GPUs (all compute capabilities via --gpu-architecture=all)
             - Requires CUDA Runtime libraries
             - Tested on Ubuntu 20.04+
 

@@ -61,14 +61,14 @@ Alternatively, you can manually trigger the workflow from the GitHub Actions UI:
 - **Runner**: `ubuntu-20.04`
 - **CUDA Version**: 12.6.2
 - **Build Tool**: GNU Make + GCC
-- **Compute Capability**: 8.6 (RTX 30-series and newer)
+- **Compute Capability**: All architectures (via `--gpu-architecture=all`)
 - **Output**: `VanitySearch-Linux-CUDA.tar.gz`
 - **Contents**: 
   - `VanitySearch` (executable)
   - `LICENSE.txt`
   - `README.md`
 
-**Note**: Users need CUDA runtime libraries installed to run the binary.
+**Note**: The Makefile compiles for all CUDA architectures, ensuring broad GPU compatibility.
 
 ### macOS Build
 
@@ -96,23 +96,30 @@ All build jobs run in parallel. The release job runs only after all builds compl
 
 ## Customizing the Build
 
-### Changing CUDA Compute Capability
+### Changing CUDA Version
 
-To target different GPU architectures, modify the `CCAP` parameter in `.github/workflows/release.yml`:
+To use a different CUDA version, modify the `CUDA_VERSION` environment variable in `.github/workflows/release.yml`:
 
 ```yaml
-# Linux build
-- name: Build VanitySearch with CUDA
-  run: |
-    make gpu=1 CCAP=8.9 CUDA=/usr/local/cuda all
+env:
+  CUDA_VERSION: '12.6.2'  # Change to desired version
 ```
 
-Common compute capabilities:
-- `CCAP=6.1` - GTX 10-series (1080 Ti, etc.)
-- `CCAP=7.5` - RTX 20-series, GTX 16-series
-- `CCAP=8.6` - RTX 30-series
-- `CCAP=8.9` - RTX 40-series
-- `CCAP=9.0` - RTX 50-series
+**Note**: Ensure the selected version is available in the [cuda-toolkit GitHub Action](https://github.com/Jimver/cuda-toolkit).
+
+### Building for Different GPU Architectures
+
+The Linux build uses `--gpu-architecture=all` in the Makefile, which compiles for all supported NVIDIA GPU architectures. This ensures maximum compatibility across different GPU generations.
+
+If you need to target specific architectures only (to reduce binary size), modify the Makefile's NVCC flags:
+
+```makefile
+# In Makefile, change:
+--gpu-architecture=all
+
+# To specific compute capabilities:
+--gpu-architecture=sm_86,sm_89,sm_90
+```
 
 ### Adding More Platforms
 
@@ -134,7 +141,7 @@ To add support for additional platforms:
 
 - Ensure the Makefile uses the correct CUDA path (`/usr/local/cuda`)
 - Verify GCC version is compatible with CUDA 12.6 (GCC 11 recommended)
-- Check compute capability matches available hardware
+- The Makefile compiles for all GPU architectures using `--gpu-architecture=all`
 
 ### Build Fails on macOS
 
