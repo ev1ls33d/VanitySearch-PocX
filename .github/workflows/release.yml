@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (emtpy = parse from source)'
+        description: 'Version tag (leave empty to parse from source)'
         required: false
         default: ''
 
