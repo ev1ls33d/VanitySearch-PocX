@@ -70,9 +70,9 @@
       <PtxAsOptionV Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</PtxAsOptionV>
       <PtxAsOptionV Condition="'$(Configuration)|$(Platform)'=='ReleaseSM30|x64'">true</PtxAsOptionV>
       <NvccCompilation Condition="'$(Configuration)|$(Platform)'=='ReleaseSM30|x64'">compile</NvccCompilation>
-      <CudaRuntime Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Hybrid</CudaRuntime>
-      <CudaRuntime Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Hybrid</CudaRuntime>
-      <CudaRuntime Condition="'$(Configuration)|$(Platform)'=='ReleaseSM30|x64'">Hybrid</CudaRuntime>
+      <CudaRuntime Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Static</CudaRuntime>
+      <CudaRuntime Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Static</CudaRuntime>
+      <CudaRuntime Condition="'$(Configuration)|$(Platform)'=='ReleaseSM30|x64'">Static</CudaRuntime>
     </CudaCompile>
   </ItemGroup>
   <ItemGroup>
