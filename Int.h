@@ -248,9 +248,18 @@ static uint64_t inline __rdtsc() {
 #define __shiftright128(a,b,n) ((a)>>(n))|((b)<<(64-(n)))
 #define __shiftleft128(a,b,n) ((b)<<(n))|((a)>>(64-(n)))
 
+#if defined(__ADX__)
+#define _addcarry_u64(a,b,c,d) __builtin_ia32_addcarryx_u64(a,b,c,(long long unsigned int*)d);
+#else
+static inline unsigned char _addcarry_u64_impl(unsigned char c_in, uint64_t a, uint64_t b, uint64_t* out) {
+  uint64_t result = a + b + c_in;
+  *out = result;
+  return (result < a) || (c_in && result == a);
+}
+#define _addcarry_u64(a,b,c,d) _addcarry_u64_impl(a,b,c,d)
+#endif
 
 #define _subborrow_u64(a,b,c,d) __builtin_ia32_sbb_u64(a,b,c,(long long unsigned int*)d);
-#define _addcarry_u64(a,b,c,d) __builtin_ia32_addcarryx_u64(a,b,c,(long long unsigned int*)d);
 #define _byteswap_uint64 __builtin_bswap64
 #define LZC(x) __builtin_clzll(x)
 #define TZC(x) __builtin_ctzll(x)
